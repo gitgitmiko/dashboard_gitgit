@@ -74,7 +74,7 @@
 </head>
 <body>
   <main>
-    <section id="login" class="card hidden">
+    <section id="login" class="card">
       <h1>Dashboard Gitgit</h1>
       <p class="sub">Masuk untuk melihat pemakaian server.</p>
       <form id="login-form">
@@ -190,9 +190,15 @@
       show(false);
     });
 
-    const session = await fetch(`${base}/api/session`, { cache: "no-store" });
-    if (session.ok) begin();
-    else show(false);
+    (async () => {
+      try {
+        const session = await fetch(`${base}/api/session`, { cache: "no-store" });
+        if (session.ok) begin();
+        else show(false);
+      } catch {
+        show(false);
+      }
+    })();
   </script>
 </body>
 </html>
