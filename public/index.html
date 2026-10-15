@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard Gitgit</title>
+  <link rel="stylesheet" href="/agen/vendor/xterm.css" />
   <style>
     :root {
       color-scheme: dark;
@@ -24,8 +25,9 @@
       background: radial-gradient(1200px 500px at 10% -10%, #24321c, var(--bg));
       color: var(--text);
     }
-    main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }
+    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }
     h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.03em; }
+    h2 { margin: 0 0 10px; font-size: 1.1rem; }
     .sub { color: var(--muted); margin: 6px 0 22px; }
     .card {
       background: var(--card);
@@ -35,7 +37,7 @@
     }
     form { display: grid; gap: 12px; max-width: 380px; }
     label { font-size: 0.9rem; color: var(--muted); }
-    input {
+    input, .path-input {
       width: 100%;
       border: 1px solid var(--line);
       background: #121812;
@@ -55,6 +57,7 @@
       cursor: pointer;
     }
     button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    button.small { padding: 8px 12px; font-size: 0.88rem; }
     .error { color: var(--hot); min-height: 1.2em; }
     .top { display: flex; justify-content: space-between; gap: 16px; align-items: end; }
     .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
@@ -68,15 +71,72 @@
     th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); font-size: 0.92rem; }
     th { color: var(--muted); font-weight: 600; }
     section { margin-top: 12px; }
-    .hidden { display: none; }
-    @media (max-width: 800px) { .grid { grid-template-columns: 1fr 1fr; } .top { align-items: start; flex-direction: column; } }
+    .hidden { display: none !important; }
+    .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 12px; }
+    .tabs button.active { background: var(--accent); color: #17210d; }
+    .files-toolbar, .term-toolbar, .crumb-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .crumb-row { overflow-x: auto; }
+    .crumb {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      font-size: 0.88rem;
+    }
+    .crumb button {
+      background: transparent;
+      color: var(--accent);
+      border: 0;
+      padding: 2px 4px;
+      font-weight: 600;
+    }
+    .crumb span { color: var(--muted); }
+    .files-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; }
+    .file-row { cursor: pointer; }
+    .file-row:hover td { background: #222c1e; }
+    .file-row.active td { background: #2a3822; }
+    .name-cell { display: flex; gap: 8px; align-items: center; word-break: break-all; }
+    .icon { width: 1.2em; text-align: center; }
+    .preview {
+      min-height: 240px;
+      max-height: 520px;
+      overflow: auto;
+      background: #121812;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.82rem;
+    }
+    .preview img { max-width: 100%; border-radius: 8px; }
+    #term {
+      height: min(62vh, 620px);
+      background: #0d120c;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 8px;
+      overflow: hidden;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 99px; background: var(--hot); display: inline-block; }
+    .status-dot.on { background: var(--accent); }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+      .files-layout { grid-template-columns: 1fr; }
+      .top { align-items: start; flex-direction: column; }
+    }
   </style>
 </head>
 <body>
   <main>
     <section id="login" class="card">
       <h1>Dashboard Gitgit</h1>
-      <p class="sub">Masuk untuk melihat pemakaian server.</p>
+      <p class="sub">Masuk untuk melihat pemakaian server, folder, dan terminal.</p>
       <form id="login-form">
         <label for="password">Kata sandi</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
@@ -93,35 +153,105 @@
         </div>
         <button id="logout" class="ghost" type="button">Keluar</button>
       </div>
-      <div class="grid">
-        <article class="card metric"><span>CPU</span><strong id="cpu">—</strong><div class="bar" id="cpu-bar"><i></i></div></article>
-        <article class="card metric"><span>RAM</span><strong id="ram">—</strong><div class="bar" id="ram-bar"><i></i></div><p class="muted" id="ram-detail"></p></article>
-        <article class="card metric"><span>Swap</span><strong id="swap">—</strong><p class="muted" id="swap-detail"></p></article>
-        <article class="card metric"><span>Load</span><strong id="load">—</strong><p class="muted" id="uptime"></p></article>
+      <nav class="tabs">
+        <button class="ghost active" type="button" data-tab="overview">Ringkasan</button>
+        <button class="ghost" type="button" data-tab="files">Folder</button>
+        <button class="ghost" type="button" data-tab="terminal">Terminal</button>
+      </nav>
+
+      <div id="tab-overview">
+        <div class="grid">
+          <article class="card metric"><span>CPU</span><strong id="cpu">—</strong><div class="bar" id="cpu-bar"><i></i></div></article>
+          <article class="card metric"><span>RAM</span><strong id="ram">—</strong><div class="bar" id="ram-bar"><i></i></div><p class="muted" id="ram-detail"></p></article>
+          <article class="card metric"><span>Swap</span><strong id="swap">—</strong><p class="muted" id="swap-detail"></p></article>
+          <article class="card metric"><span>Load</span><strong id="load">—</strong><p class="muted" id="uptime"></p></article>
+        </div>
+        <section class="card">
+          <h2>Penyimpanan</h2>
+          <table>
+            <thead><tr><th>Mount</th><th>Terpakai</th><th>Kosong</th><th>Total</th><th>%</th></tr></thead>
+            <tbody id="disks"></tbody>
+          </table>
+        </section>
+        <section class="card">
+          <h2>Jaringan</h2>
+          <table>
+            <thead><tr><th>Antarmuka</th><th>Unduh</th><th>Unggah</th></tr></thead>
+            <tbody id="net"></tbody>
+          </table>
+        </section>
       </div>
-      <section class="card">
-        <h2>Penyimpanan</h2>
-        <table>
-          <thead><tr><th>Mount</th><th>Terpakai</th><th>Kosong</th><th>Total</th><th>%</th></tr></thead>
-          <tbody id="disks"></tbody>
-        </table>
-      </section>
-      <section class="card">
-        <h2>Jaringan</h2>
-        <table>
-          <thead><tr><th>Antarmuka</th><th>Unduh</th><th>Unggah</th></tr></thead>
-          <tbody id="net"></tbody>
-        </table>
-      </section>
+
+      <div id="tab-files" class="hidden">
+        <section class="card">
+          <form class="files-toolbar" id="path-form">
+            <input class="path-input" id="path-input" name="path" spellcheck="false" />
+            <button class="small" type="submit">Buka</button>
+            <button class="ghost small" id="go-home" type="button">Home</button>
+            <button class="ghost small" id="go-root" type="button">/</button>
+            <button class="ghost small" id="go-up" type="button">Naik</button>
+          </form>
+          <div class="crumb-row">
+            <div class="crumb" id="crumb"></div>
+          </div>
+          <p id="files-error" class="error"></p>
+          <div class="files-layout">
+            <div>
+              <input id="file-filter" placeholder="Saring nama…" />
+              <div style="overflow:auto; max-height: 560px;">
+                <table>
+                  <thead><tr><th>Nama</th><th>Ukuran</th><th>Diubah</th></tr></thead>
+                  <tbody id="files"></tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <div class="files-toolbar">
+                <strong id="preview-title">Pratinjau</strong>
+                <button class="ghost small" id="download-btn" type="button">Unduh</button>
+                <button class="ghost small" id="open-term-btn" type="button">Buka di terminal</button>
+              </div>
+              <div class="preview" id="preview">Pilih folder atau berkas.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div id="tab-terminal" class="hidden">
+        <section class="card">
+          <div class="term-toolbar">
+            <span class="status-dot" id="term-dot"></span>
+            <span class="muted" id="term-status">Belum tersambung</span>
+            <button class="ghost small" id="term-reconnect" type="button">Sambungkan ulang</button>
+          </div>
+          <div id="term"></div>
+        </section>
+      </div>
     </section>
   </main>
+  <script src="/agen/vendor/xterm.js"></script>
+  <script src="/agen/vendor/xterm-addon-fit.js"></script>
   <script>
     const base = "/agen";
     const login = document.querySelector("#login");
     const dash = document.querySelector("#dash");
     const loginError = document.querySelector("#login-error");
+    let homePath = "/home/gitgitmiko";
+    let currentPath = homePath;
+    let currentParent = null;
+    let entries = [];
+    let selectedPath = "";
+    let timer = 0;
+    let term = null;
+    let fitAddon = null;
+    let termWs = null;
+    let pendingCd = "";
 
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
     function fmtBytes(n) {
+      if (n == null || Number.isNaN(Number(n))) return "—";
       const v = Number(n) || 0;
       const units = ["B", "KB", "MB", "GB", "TB"];
       let i = 0;
@@ -147,10 +277,38 @@
       login.classList.toggle("hidden", authed);
       dash.classList.toggle("hidden", !authed);
     }
+    function iconFor(type) {
+      if (type === "dir") return "📁";
+      if (type === "link") return "🔗";
+      return "📄";
+    }
+    function shellQuote(s) {
+      return `'${String(s).replace(/'/g, `'\\''`)}'`;
+    }
+    function fileUrl(path, download) {
+      return `${base}/api/fs/file?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
+    }
+
+    function showTab(name) {
+      document.querySelectorAll(".tabs button").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === name));
+      document.querySelector("#tab-overview").classList.toggle("hidden", name !== "overview");
+      document.querySelector("#tab-files").classList.toggle("hidden", name !== "files");
+      document.querySelector("#tab-terminal").classList.toggle("hidden", name !== "terminal");
+      if (name === "files" && !entries.length) loadFiles(currentPath);
+      if (name === "terminal") {
+        openTerminal();
+        requestAnimationFrame(() => {
+          fitAddon?.fit();
+          sendResize();
+        });
+      }
+    }
+
     async function paint() {
       const res = await fetch(`${base}/api/stats`, { cache: "no-store" });
-      if (res.status === 401) { show(false); return; }
+      if (res.status === 401) { show(false); closeTerminal(); return; }
       const data = await res.json();
+      if (data.home) homePath = data.home;
       document.querySelector("#host").textContent = data.hostname || "Server";
       document.querySelector("#meta").textContent = new Date(data.time).toLocaleString("id-ID");
       document.querySelector("#cpu").textContent = `${data.cpu.percent.toFixed(1)}%`;
@@ -163,16 +321,169 @@
       document.querySelector("#swap-detail").textContent = data.memory.swap_total ? `${fmtBytes(data.memory.swap_used)} / ${fmtBytes(data.memory.swap_total)}` : "";
       document.querySelector("#load").textContent = `${data.load.one.toFixed(2)}`;
       document.querySelector("#uptime").textContent = `1 / 5 / 15 mnt: ${data.load.one.toFixed(2)} · ${data.load.five.toFixed(2)} · ${data.load.fifteen.toFixed(2)} · hidup ${fmtDuration(data.uptime_sec)}`;
-      document.querySelector("#disks").innerHTML = data.disks.map((d) => `<tr><td>${d.mount}</td><td>${fmtBytes(d.used)}</td><td>${fmtBytes(d.avail)}</td><td>${fmtBytes(d.size)}</td><td>${d.percent}%</td></tr>`).join("");
-      document.querySelector("#net").innerHTML = data.network.map((n) => `<tr><td>${n.name}</td><td>${fmtBytes(n.rx_bps)}/dtk</td><td>${fmtBytes(n.tx_bps)}/dtk</td></tr>`).join("") || "<tr><td colspan='3'>Tidak ada antarmuka</td></tr>";
+      document.querySelector("#disks").innerHTML = data.disks.map((d) => `<tr><td>${esc(d.mount)}</td><td>${fmtBytes(d.used)}</td><td>${fmtBytes(d.avail)}</td><td>${fmtBytes(d.size)}</td><td>${d.percent}%</td></tr>`).join("");
+      document.querySelector("#net").innerHTML = data.network.map((n) => `<tr><td>${esc(n.name)}</td><td>${fmtBytes(n.rx_bps)}/dtk</td><td>${fmtBytes(n.tx_bps)}/dtk</td></tr>`).join("") || "<tr><td colspan='3'>Tidak ada antarmuka</td></tr>";
     }
 
-    let timer = 0;
+    function renderCrumb(path) {
+      const parts = path.split("/").filter(Boolean);
+      let acc = "";
+      const bits = [`<button type="button" data-path="/">/</button>`];
+      for (const part of parts) {
+        acc += `/${part}`;
+        bits.push(`<span>/</span><button type="button" data-path="${esc(acc)}">${esc(part)}</button>`);
+      }
+      document.querySelector("#crumb").innerHTML = bits.join("");
+    }
+
+    function renderFiles() {
+      const q = document.querySelector("#file-filter").value.trim().toLowerCase();
+      const rows = entries.filter((e) => !q || e.name.toLowerCase().includes(q));
+      document.querySelector("#files").innerHTML = rows.map((e) => `
+        <tr class="file-row ${e.path === selectedPath ? "active" : ""}" data-path="${esc(e.path)}" data-type="${esc(e.type)}">
+          <td class="name-cell"><span class="icon">${iconFor(e.type)}</span>${esc(e.name)}</td>
+          <td>${e.type === "dir" ? "—" : fmtBytes(e.size)}</td>
+          <td>${e.mtime ? new Date(e.mtime).toLocaleString("id-ID") : "—"}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="3">Folder kosong</td></tr>`;
+    }
+
+    async function loadFiles(path) {
+      const filesError = document.querySelector("#files-error");
+      filesError.textContent = "";
+      const res = await fetch(`${base}/api/fs?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+      if (res.status === 401) { show(false); return; }
+      const data = await res.json();
+      if (!res.ok) {
+        filesError.textContent = data.message || "Gagal membaca folder";
+        return;
+      }
+      currentPath = data.path;
+      currentParent = data.parent;
+      entries = data.entries || [];
+      document.querySelector("#path-input").value = currentPath;
+      renderCrumb(currentPath);
+      renderFiles();
+      if (data.truncated) filesError.textContent = "Daftar dipotong karena terlalu banyak berkas.";
+    }
+
+    async function previewFile(path, type) {
+      selectedPath = path;
+      renderFiles();
+      const box = document.querySelector("#preview");
+      const title = document.querySelector("#preview-title");
+      title.textContent = path;
+      if (type === "dir") {
+        box.textContent = `Folder ${path}`;
+        return;
+      }
+      const res = await fetch(`${base}/api/fs/preview?path=${encodeURIComponent(path)}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) {
+        box.textContent = data.message || "Tidak bisa dibuka";
+        return;
+      }
+      if (data.type === "image") {
+        box.innerHTML = `<img alt="${esc(data.name)}" src="${fileUrl(path, false)}" />`;
+        return;
+      }
+      if (data.type === "binary") {
+        box.textContent = `Berkas biner (${fmtBytes(data.size)}). Unduh untuk membukanya.`;
+        return;
+      }
+      box.textContent = `${data.truncated ? `[Pratinjau dipotong]\n\n` : ""}${data.content || ""}`;
+    }
+
     function begin() {
       show(true);
       paint();
       if (!timer) timer = setInterval(paint, 3000);
     }
+
+    function setTermStatus(on, text) {
+      document.querySelector("#term-dot").classList.toggle("on", on);
+      document.querySelector("#term-status").textContent = text;
+    }
+
+    function sendResize() {
+      if (!term || !termWs || termWs.readyState !== WebSocket.OPEN) return;
+      termWs.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    }
+
+    function sendToTerm(text) {
+      if (termWs && termWs.readyState === WebSocket.OPEN) termWs.send(text);
+    }
+
+    function openInTerminal(path) {
+      pendingCd = path;
+      showTab("terminal");
+      if (termWs && termWs.readyState === WebSocket.OPEN) {
+        sendToTerm(`cd ${shellQuote(path)}\n`);
+        pendingCd = "";
+      }
+    }
+
+    function closeTerminal() {
+      if (termWs) {
+        termWs.onclose = null;
+        termWs.close();
+        termWs = null;
+      }
+      setTermStatus(false, "Terputus");
+    }
+
+    function openTerminal() {
+      if (!term) {
+        term = new Terminal({
+          cursorBlink: true,
+          fontSize: 14,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          theme: {
+            background: "#0d120c",
+            foreground: "#e7f0df",
+            cursor: "#b6e36a",
+            selectionBackground: "#3a4d30",
+          },
+        });
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(document.querySelector("#term"));
+        term.onData((data) => sendToTerm(data));
+        window.addEventListener("resize", () => {
+          if (document.querySelector("#tab-terminal").classList.contains("hidden")) return;
+          fitAddon.fit();
+          sendResize();
+        });
+      }
+      if (termWs && (termWs.readyState === WebSocket.OPEN || termWs.readyState === WebSocket.CONNECTING)) {
+        fitAddon.fit();
+        sendResize();
+        return;
+      }
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      termWs = new WebSocket(`${proto}://${location.host}${base}/ws/terminal`);
+      termWs.binaryType = "arraybuffer";
+      setTermStatus(false, "Menyambungkan…");
+      termWs.onopen = () => {
+        setTermStatus(true, "Tersambung");
+        fitAddon.fit();
+        sendResize();
+        if (pendingCd) {
+          sendToTerm(`cd ${shellQuote(pendingCd)}\n`);
+          pendingCd = "";
+        }
+      };
+      termWs.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
+        else term.write(ev.data);
+      };
+      termWs.onclose = () => {
+        setTermStatus(false, "Terputus");
+        termWs = null;
+      };
+      termWs.onerror = () => setTermStatus(false, "Gagal menyambung");
+    }
+
     document.querySelector("#login-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       loginError.textContent = "";
@@ -182,17 +493,62 @@
         loginError.textContent = "Kata sandi salah";
         return;
       }
+      const data = await res.json().catch(() => ({}));
+      if (data.home) {
+        homePath = data.home;
+        currentPath = data.home;
+      }
       begin();
     });
     document.querySelector("#logout").addEventListener("click", async () => {
       await fetch(`${base}/logout`, { method: "POST" });
       if (timer) { clearInterval(timer); timer = 0; }
+      closeTerminal();
       show(false);
+    });
+    document.querySelectorAll(".tabs button").forEach((btn) => {
+      btn.addEventListener("click", () => showTab(btn.dataset.tab));
+    });
+    document.querySelector("#path-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      loadFiles(document.querySelector("#path-input").value.trim() || homePath);
+    });
+    document.querySelector("#go-home").addEventListener("click", () => loadFiles(homePath));
+    document.querySelector("#go-root").addEventListener("click", () => loadFiles("/"));
+    document.querySelector("#go-up").addEventListener("click", () => {
+      if (currentParent) loadFiles(currentParent);
+    });
+    document.querySelector("#file-filter").addEventListener("input", renderFiles);
+    document.querySelector("#crumb").addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-path]");
+      if (btn) loadFiles(btn.dataset.path);
+    });
+    document.querySelector("#files").addEventListener("click", (event) => {
+      const row = event.target.closest("tr[data-path]");
+      if (!row) return;
+      if (row.dataset.type === "dir") loadFiles(row.dataset.path);
+      else previewFile(row.dataset.path, row.dataset.type);
+    });
+    document.querySelector("#download-btn").addEventListener("click", () => {
+      if (!selectedPath) return;
+      location.href = fileUrl(selectedPath, true);
+    });
+    document.querySelector("#open-term-btn").addEventListener("click", () => {
+      openInTerminal(selectedPath || currentPath);
+    });
+    document.querySelector("#term-reconnect").addEventListener("click", () => {
+      closeTerminal();
+      openTerminal();
     });
 
     (async () => {
       try {
         const session = await fetch(`${base}/api/session`, { cache: "no-store" });
+        const data = await session.json().catch(() => ({}));
+        if (data.home) {
+          homePath = data.home;
+          currentPath = data.home;
+        }
         if (session.ok) begin();
         else show(false);
       } catch {

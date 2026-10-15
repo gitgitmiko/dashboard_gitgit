@@ -1,12 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { lstat, open, readFile, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { hostname as osHostname, loadavg, uptime } from "node:os";
-import { dirname, join } from "node:path";
+import { homedir as osHomedir, hostname as osHostname, loadavg, uptime } from "node:os";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { WebSocketServer } from "ws";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -14,8 +15,15 @@ const PUBLIC_DIR = join(__dirname, "public");
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4180);
 const BASE = (process.env.BASE_PATH || "/agen").replace(/\/+$/, "") || "/agen";
+const HOME = osHomedir();
+const PYTHON = "/usr/bin/python3";
+const PTY_BRIDGE = join(__dirname, "pty-bridge.py");
+const MAX_PREVIEW = 512 * 1024;
+const MAX_LIST = 4000;
+const MAX_TERM = 8;
 const sessions = new Map();
 const SESSION_MS = 12 * 60 * 60 * 1000;
+let termCount = 0;
 
 let cpuPrev = readCpuSample();
 let netPrev = { at: Date.now(), counters: readNetCounters() };
@@ -152,6 +160,7 @@ async function collectStats() {
     hostname: osHostname(),
     time: new Date().toISOString(),
     uptime_sec: uptime(),
+    home: HOME,
     load: { one, five, fifteen },
     cpu: { percent: cpuPercent() },
     memory: {
@@ -178,6 +187,235 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function resolveUserPath(input) {
+  const raw = String(input ?? "").trim() || HOME;
+  if (raw.includes("\0")) throw httpError(400, "Path tidak valid");
+  const expanded = raw === "~" ? HOME : raw.startsWith("~/") ? join(HOME, raw.slice(2)) : raw;
+  const target = resolve(expanded);
+  if (!target.startsWith("/")) throw httpError(400, "Path tidak valid");
+  return target;
+}
+
+function fileType(st) {
+  if (st.isSymbolicLink()) return "link";
+  if (st.isDirectory()) return "dir";
+  if (st.isFile()) return "file";
+  return "other";
+}
+
+function imageExt(filePath) {
+  return [".png", ".jpg", ".jpeg", ".gif", ".webp"].includes(extname(filePath).toLowerCase());
+}
+
+function imageMime(filePath) {
+  const ext = extname(filePath).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  return "application/octet-stream";
+}
+
+function safeDownloadName(filePath) {
+  return basename(filePath).replace(/[\r\n"]/g, "_") || "berkas";
+}
+
+async function listPath(rawPath) {
+  const target = resolveUserPath(rawPath);
+  let st;
+  try {
+    st = await lstat(target);
+  } catch (err) {
+    throw httpError(err.code === "ENOENT" ? 404 : err.code === "EACCES" ? 403 : 400, err.code === "ENOENT" ? "Tidak ditemukan" : err.code === "EACCES" ? "Tidak ada izin" : err.message);
+  }
+  if (!st.isDirectory()) throw httpError(400, "Bukan folder");
+  let names;
+  try {
+    names = await readdir(target);
+  } catch (err) {
+    throw httpError(err.code === "EACCES" ? 403 : 500, err.code === "EACCES" ? "Tidak ada izin" : err.message);
+  }
+  const truncated = names.length > MAX_LIST;
+  const entries = [];
+  for (const name of names.slice(0, MAX_LIST)) {
+    const full = join(target, name);
+    try {
+      const row = await lstat(full);
+      entries.push({
+        name,
+        path: full,
+        type: fileType(row),
+        size: row.isDirectory() ? null : row.size,
+        mtime: row.mtime.toISOString(),
+        mode: (row.mode & 0o777).toString(8).padStart(3, "0"),
+      });
+    } catch {
+      entries.push({ name, path: full, type: "unknown", size: null, mtime: null, mode: null });
+    }
+  }
+  entries.sort((a, b) => {
+    const ad = a.type === "dir" ? 0 : 1;
+    const bd = b.type === "dir" ? 0 : 1;
+    if (ad !== bd) return ad - bd;
+    return a.name.localeCompare(b.name, "id", { sensitivity: "base" });
+  });
+  return {
+    path: target,
+    parent: target === "/" ? null : dirname(target),
+    truncated,
+    entries,
+  };
+}
+
+async function previewPath(rawPath) {
+  const target = resolveUserPath(rawPath);
+  let st;
+  try {
+    st = await stat(target);
+  } catch (err) {
+    throw httpError(err.code === "ENOENT" ? 404 : err.code === "EACCES" ? 403 : 400, err.code === "ENOENT" ? "Tidak ditemukan" : err.code === "EACCES" ? "Tidak ada izin" : err.message);
+  }
+  if (st.isDirectory()) throw httpError(400, "Ini folder");
+  if (!st.isFile()) throw httpError(400, "Bukan berkas biasa");
+  if (imageExt(target)) {
+    return { path: target, name: basename(target), type: "image", size: st.size, mtime: st.mtime.toISOString() };
+  }
+  const handle = await open(target, "r");
+  try {
+    const len = Math.min(st.size, MAX_PREVIEW);
+    const buf = Buffer.alloc(len);
+    const { bytesRead } = await handle.read(buf, 0, len, 0);
+    const slice = buf.subarray(0, bytesRead);
+    const binary = slice.includes(0);
+    return {
+      path: target,
+      name: basename(target),
+      type: binary ? "binary" : "text",
+      size: st.size,
+      truncated: st.size > MAX_PREVIEW,
+      mtime: st.mtime.toISOString(),
+      content: binary ? null : slice.toString("utf8"),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function sendFile(req, res, rawPath, download) {
+  const target = resolveUserPath(rawPath);
+  let st;
+  try {
+    st = await stat(target);
+  } catch (err) {
+    throw httpError(err.code === "ENOENT" ? 404 : err.code === "EACCES" ? 403 : 400, err.code === "ENOENT" ? "Tidak ditemukan" : err.code === "EACCES" ? "Tidak ada izin" : err.message);
+  }
+  if (!st.isFile()) throw httpError(400, "Bukan berkas biasa");
+  const name = safeDownloadName(target);
+  const type = download ? "application/octet-stream" : imageExt(target) ? imageMime(target) : "text/plain; charset=utf-8";
+  res.writeHead(200, {
+    "Content-Type": type,
+    "Content-Length": st.size,
+    "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${name}"`,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  createReadStream(target).pipe(res);
+}
+
+function requireAuth(req, res) {
+  if (sessionUser(req)) return true;
+  sendJson(res, 401, { ok: false, message: "Belum masuk" });
+  return false;
+}
+
+function attachTerminal(ws) {
+  if (termCount >= MAX_TERM) {
+    ws.send("Terlalu banyak sesi terminal. Tutup tab lain lalu coba lagi.\r\n");
+    ws.close(1013, "too many terminals");
+    return;
+  }
+  if (!existsSync(PTY_BRIDGE) || !existsSync(PYTHON)) {
+    ws.send("Terminal tidak siap: python3 atau pty-bridge.py tidak ada.\r\n");
+    ws.close();
+    return;
+  }
+
+  termCount += 1;
+  let cleaned = false;
+  const child = spawn(PYTHON, ["-u", PTY_BRIDGE], {
+    cwd: HOME,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      LANG: process.env.LANG || "C.UTF-8",
+      HOME,
+      SHELL: process.env.SHELL || "/bin/bash",
+      USER: process.env.USER || "gitgitmiko",
+      PWD: HOME,
+      PTY_ROWS: "24",
+      PTY_COLS: "80",
+    },
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
+  });
+
+  const ping = setInterval(() => {
+    if (ws.readyState === ws.OPEN) ws.ping();
+  }, 25000);
+
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    clearInterval(ping);
+    termCount = Math.max(0, termCount - 1);
+    try {
+      child.kill("SIGHUP");
+    } catch {
+      /* ignore */
+    }
+  };
+
+  child.stdout.on("data", (data) => {
+    if (ws.readyState === ws.OPEN) ws.send(data);
+  });
+  child.stderr.on("data", (data) => {
+    if (ws.readyState === ws.OPEN) ws.send(data);
+  });
+  child.on("error", (err) => {
+    if (ws.readyState === ws.OPEN) ws.send(`Gagal membuka terminal: ${err.message}\r\n`);
+    cleanup();
+    ws.close();
+  });
+  child.on("exit", () => {
+    cleanup();
+    if (ws.readyState === ws.OPEN) ws.close();
+  });
+  ws.on("close", () => {
+    cleanup();
+  });
+  ws.on("message", (raw, isBinary) => {
+    const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
+    if (!isBinary && text.startsWith("{")) {
+      try {
+        const msg = JSON.parse(text);
+        if (msg.type === "resize" && child.stdio[3]) {
+          child.stdio[3].write(`${JSON.stringify({ rows: Number(msg.rows) || 24, cols: Number(msg.cols) || 80 })}\n`);
+          return;
+        }
+      } catch {
+        /* treat as input */
+      }
+    }
+    if (child.stdin.writable) child.stdin.write(isBinary ? raw : text);
+  });
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -198,7 +436,8 @@ const server = createServer(async (req, res) => {
   }
 
   if (path === `${base}/api/session` && req.method === "GET") {
-    sendJson(res, sessionUser(req) ? 200 : 401, { ok: Boolean(sessionUser(req)) });
+    const ok = Boolean(sessionUser(req));
+    sendJson(res, ok ? 200 : 401, { ok, home: HOME });
     return;
   }
 
@@ -211,7 +450,7 @@ const server = createServer(async (req, res) => {
     }
     const token = randomBytes(24).toString("hex");
     sessions.set(token, { expires: Date.now() + SESSION_MS });
-    send(res, 200, JSON.stringify({ ok: true }), {
+    send(res, 200, JSON.stringify({ ok: true, home: HOME }), {
       "Content-Type": "application/json; charset=utf-8",
       "Set-Cookie": cookie(token, Math.floor(SESSION_MS / 1000)),
     });
@@ -226,14 +465,41 @@ const server = createServer(async (req, res) => {
   }
 
   if (path === `${base}/api/stats` && req.method === "GET") {
-    if (!sessionUser(req)) {
-      sendJson(res, 401, { ok: false });
-      return;
-    }
+    if (!requireAuth(req, res)) return;
     try {
       sendJson(res, 200, { ok: true, ...(await collectStats()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/fs` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await listPath(url.searchParams.get("path"))) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/fs/preview` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await previewPath(url.searchParams.get("path"))) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/fs/file` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      await sendFile(req, res, url.searchParams.get("path"), url.searchParams.get("download") === "1");
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }
@@ -250,6 +516,24 @@ const server = createServer(async (req, res) => {
   }
 
   send(res, 404, "Tidak ditemukan");
+});
+
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url || "/", "http://127.0.0.1");
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  if (path !== `${BASE}/ws/terminal`) {
+    socket.destroy();
+    return;
+  }
+  if (!sessionUser(req)) {
+    socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    attachTerminal(ws);
+  });
 });
 
 server.listen(PORT, HOST, () => {
