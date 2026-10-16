@@ -226,8 +226,6 @@
       <div id="tab-terminal" class="hidden">
         <section class="card">
           <div class="term-toolbar">
-            <span class="status-dot" id="term-dot"></span>
-            <span class="muted" id="term-status">Belum tersambung</span>
             <button class="ghost small" id="term-new" type="button">+ Terminal baru</button>
             <button class="ghost small" id="term-reconnect" type="button">Sambungkan ulang</button>
           </div>
@@ -305,11 +303,13 @@
       document.querySelector("#tab-terminal").classList.toggle("hidden", name !== "terminal");
       if (name === "files" && !entries.length) loadFiles(currentPath);
       if (name === "terminal") {
-        openTerminal();
-        requestAnimationFrame(() => {
-          fitAddon?.fit();
-          sendResize();
-        });
+        const ids = Object.keys(terminals);
+        if (ids.length > 0) {
+          const last = ids[ids.length - 1];
+          requestAnimationFrame(() => {
+            if (terminals[last] && terminals[last].fitAddon) terminals[last].fitAddon.fit();
+          });
+        }
       }
     }
 
@@ -451,9 +451,11 @@
         if (tObj.ws) { tObj.ws.onclose = null; tObj.ws.close(); tObj.ws = null; }
         if (tObj.card) tObj.card.remove();
         delete terminals[id];
+        if (Object.keys(terminals).length === 0) nextTermId = 1;
       } else {
         // legacy close all
-        for (const id in terminals) closeTerminal(id);
+        for (const id_ in terminals) closeTerminal(id_);
+        if (Object.keys(terminals).length === 0) nextTermId = 1;
       }
     }
 
@@ -503,19 +505,7 @@
       return id;
     }
 
-    function closeTerminal(id) {
-      if (id && terminals[id]) {
-        const tObj = terminals[id];
-        if (tObj.ws) { tObj.ws.onclose = null; tObj.ws.close(); tObj.ws = null; }
-        if (tObj.card) tObj.card.remove();
-        delete terminals[id];
-      } else {
-        // legacy close all
-        for (const id in terminals) closeTerminal(id);
-      }
-    }
-
-    document.querySelector("#login-form").addEventListener("submit", async (event) => {
+        document.querySelector("#login-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       loginError.textContent = "";
       const body = new URLSearchParams(new FormData(event.currentTarget));
