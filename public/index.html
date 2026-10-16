@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Dashboard Gitgit</title>
   <link rel="stylesheet" href="/agen/vendor/xterm.css" />
   <style>
@@ -25,7 +25,9 @@
       background: radial-gradient(1200px 500px at 10% -10%, #24321c, var(--bg));
       color: var(--text);
     }
-    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; }
+    html { -webkit-text-size-adjust: 100%; }
+    body { overflow-x: hidden; }
+    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-bottom: calc(48px + env(safe-area-inset-bottom)); }
     h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.03em; }
     h2 { margin: 0 0 10px; font-size: 1.1rem; }
     .sub { color: var(--muted); margin: 6px 0 22px; }
@@ -75,8 +77,8 @@
     .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 12px; }
     .tabs button.active { background: var(--accent); color: #17210d; }
     .term-card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #0d120c; }
-    .term-header { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: #1a2118; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
-    .term-body { height: 520px; padding: 8px; }
+    .term-header { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; align-items: center; padding: 4px 8px; background: #1a2118; border-bottom: 1px solid var(--line); font-size: 0.9rem; }
+    .term-body { height: min(520px, 65vh); padding: 8px; }
     .term-title { font-weight: 600; color: var(--accent); }
     .term-btn { background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 0.85rem; cursor: pointer; }
     .term-btn:hover { background: var(--card); }
@@ -131,10 +133,37 @@
     }
     .status-dot { width: 8px; height: 8px; border-radius: 99px; background: var(--hot); display: inline-block; }
     .status-dot.on { background: var(--accent); }
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .files-layout > div { min-width: 0; }
+    .preview { word-break: break-word; }
+    .term-header > div { margin-left: auto; display: flex; gap: 4px; }
+    #term-container .xterm { max-width: 100%; }
     @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr 1fr; }
       .files-layout { grid-template-columns: 1fr; }
       .top { align-items: start; flex-direction: column; }
+    }
+    @media (max-width: 600px) {
+      main { width: calc(100% - 24px); padding-top: 16px; }
+      h1 { font-size: 1.35rem; }
+      .card { padding: 14px; border-radius: 12px; }
+      .grid { gap: 8px; }
+      .metric strong { font-size: 1.3rem; }
+      input, .path-input { font-size: 16px; }
+      form { max-width: none; }
+      .top { flex-direction: row; align-items: flex-start; gap: 8px; }
+      .top > div { min-width: 0; }
+      .top h1 { overflow-wrap: anywhere; }
+      .tabs { display: grid; grid-template-columns: repeat(3, 1fr); }
+      .tabs button { padding: 10px 6px; }
+      button.small, .term-btn { min-height: 38px; }
+      .files-toolbar .path-input { flex: 1 1 100%; }
+      th, td { padding: 8px 4px; font-size: 0.85rem; }
+      .term-body { height: 60vh; padding: 4px; }
+      #term-container .term-header { padding: 6px 8px; }
+    }
+    @media (max-width: 380px) {
+      .grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -174,17 +203,17 @@
         </div>
         <section class="card">
           <h2>Penyimpanan</h2>
-          <table>
+          <div class="table-wrap"><table>
             <thead><tr><th>Mount</th><th>Terpakai</th><th>Kosong</th><th>Total</th><th>%</th></tr></thead>
             <tbody id="disks"></tbody>
-          </table>
+          </table></div>
         </section>
         <section class="card">
           <h2>Jaringan</h2>
-          <table>
+          <div class="table-wrap"><table>
             <thead><tr><th>Antarmuka</th><th>Unduh</th><th>Unggah</th></tr></thead>
             <tbody id="net"></tbody>
-          </table>
+          </table></div>
         </section>
       </div>
 
@@ -204,7 +233,7 @@
           <div class="files-layout">
             <div>
               <input id="file-filter" placeholder="Saring nama…" />
-              <div style="overflow:auto; max-height: 560px;">
+              <div class="table-wrap" style="max-height: 560px;">
                 <table>
                   <thead><tr><th>Nama</th><th>Ukuran</th><th>Diubah</th></tr></thead>
                   <tbody id="files"></tbody>
@@ -704,8 +733,8 @@
       const body = document.querySelector(`#body-${id}`);
       if (body) {
         body.style.visibility = "visible";
-        body.style.height = "520px";
-        body.style.padding = "8px";
+        body.style.height = "";
+        body.style.padding = "";
       }
       terminals[id].fitAddon?.fit();
       sendResizeFor(id);
@@ -728,6 +757,20 @@
       openTerminal();
       showTab("terminal");
     });
+    let resizeTimer = 0;
+    function refitTerminals() {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        for (const id of Object.keys(terminals)) {
+          const row = terminals[id];
+          if (!row || row.dead || row.minimized || !row.term) continue;
+          try { row.fitAddon?.fit(); } catch { /* ignore */ }
+          sendResizeFor(id);
+        }
+      }, 150);
+    }
+    window.addEventListener("resize", refitTerminals);
+    window.addEventListener("orientationchange", refitTerminals);
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) return;
       for (const id of Object.keys(terminals)) {
