@@ -566,13 +566,13 @@
     function minimizeTerminal(id) {
       if (terminals[id]) {
         terminals[id].minimized = true;
-        document.querySelector(`#body-${id}`).style.display = "none";
+        document.querySelector(`#body-${id}`).style.visibility = "hidden"; document.querySelector(`#body-${id}`).style.height = "0"; document.querySelector(`#body-${id}`).style.padding = "0";
       }
     }
     function maximizeTerminal(id) {
       if (terminals[id]) {
         terminals[id].minimized = false;
-        document.querySelector(`#body-${id}`).style.display = "block";
+        document.querySelector(`#body-${id}`).style.visibility = "visible"; document.querySelector(`#body-${id}`).style.height = "520px"; document.querySelector(`#body-${id}`).style.padding = "8px";
         terminals[id].fitAddon?.fit();
         const ws = terminals[id].ws;
         if (ws && ws.readyState === WebSocket.OPEN) {
