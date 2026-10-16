@@ -15,4 +15,4 @@ Setelah masuk:
 
 - **Ringkasan** — CPU, memori, penyimpanan, dan jaringan
 - **Folder** — daftar isi disk server, pratinjau, dan unduh
-- **Terminal** — shell login di browser (WebSocket)
+- **Terminal** — shell login di browser. Sesi dan riwayat tetap hidup saat refresh atau browser ditutup; hanya tombol **Tutup** yang mematikan shell.

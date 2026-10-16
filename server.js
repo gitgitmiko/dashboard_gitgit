@@ -48,9 +48,11 @@ const PTY_BRIDGE = join(__dirname, "pty-bridge.py");
 const MAX_PREVIEW = 512 * 1024;
 const MAX_LIST = 4000;
 const MAX_TERM = 8;
+const TERM_BUFFER_MAX = 1024 * 1024;
 const sessions = new Map();
 const SESSION_MS = 12 * 60 * 60 * 1000;
-let termCount = 0;
+const termSessions = new Map();
+let termSeq = 0;
 
 let cpuPrev = readCpuSample();
 let netPrev = { at: Date.now(), counters: readNetCounters() };
@@ -361,104 +363,189 @@ function requireAuth(req, res) {
   return false;
 }
 
-function attachTerminal(ws) {
-  if (termCount >= MAX_TERM) {
-    ws.send("Terlalu banyak sesi terminal. Tutup tab lain lalu coba lagi.\r\n");
-    ws.close(1013, "too many terminals");
-    return;
+function pushTermBuffer(session, data) {
+  const chunk = Buffer.from(data);
+  session.buffer.chunks.push(chunk);
+  session.buffer.size += chunk.length;
+  while (session.buffer.size > TERM_BUFFER_MAX && session.buffer.chunks.length > 1) {
+    const dropped = session.buffer.chunks.shift();
+    session.buffer.size -= dropped.length;
   }
+}
+
+function dumpTermBuffer(session) {
+  if (!session.buffer.chunks.length) return Buffer.alloc(0);
+  return Buffer.concat(session.buffer.chunks, session.buffer.size);
+}
+
+function sendJsonWs(ws, payload) {
+  if (ws.readyState !== ws.OPEN) return;
+  try {
+    ws.send(JSON.stringify(payload));
+  } catch {
+    /* ignore */
+  }
+}
+
+function listTermSessions() {
+  return [...termSessions.values()].map((session) => ({ id: session.id, title: session.title }));
+}
+
+function spawnPty() {
+  return spawn(PYTHON, ["-u", PTY_BRIDGE], {
+    cwd: HOME,
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      LANG: process.env.LANG || "C.UTF-8",
+      HOME,
+      SHELL: process.env.SHELL || "/bin/bash",
+      USER: process.env.USER || "gitgitmiko",
+      PWD: HOME,
+      PTY_ROWS: "24",
+      PTY_COLS: "80",
+    },
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
+  });
+}
+
+function broadcastTerm(session, data) {
+  for (const client of session.clients) {
+    if (client.readyState !== client.OPEN) continue;
+    try {
+      client.send(data);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function destroyTermSession(id, { alreadyDead } = {}) {
+  const session = termSessions.get(id);
+  if (!session || session.destroyed) return;
+  session.destroyed = true;
+  termSessions.delete(id);
+  for (const client of session.clients) {
+    sendJsonWs(client, { type: "exit", id });
+    try {
+      client.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  session.clients.clear();
+  if (!alreadyDead) {
+    try {
+      session.child.kill("SIGHUP");
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function createTermSession() {
+  const id = randomBytes(8).toString("hex");
+  const child = spawnPty();
+  const session = {
+    id,
+    title: `Terminal ${++termSeq}`,
+    child,
+    buffer: { chunks: [], size: 0 },
+    clients: new Set(),
+    destroyed: false,
+  };
+  const onOut = (data) => {
+    pushTermBuffer(session, data);
+    broadcastTerm(session, data);
+  };
+  child.stdout.on("data", onOut);
+  child.stderr.on("data", onOut);
+  child.on("error", (err) => {
+    const msg = Buffer.from(`Gagal membuka terminal: ${err.message}\r\n`);
+    pushTermBuffer(session, msg);
+    broadcastTerm(session, msg);
+    destroyTermSession(id, { alreadyDead: true });
+  });
+  child.on("exit", () => {
+    destroyTermSession(id, { alreadyDead: true });
+  });
+  termSessions.set(id, session);
+  return session;
+}
+
+function closeWsSoon(ws, code, reason) {
+  setTimeout(() => {
+    try {
+      if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close(code, reason);
+    } catch {
+      /* ignore */
+    }
+  }, 50);
+}
+
+function attachTerminal(ws, requestedId) {
+  const run = () => attachTerminalOpen(ws, requestedId);
+  if (ws.readyState === ws.OPEN) run();
+  else ws.once("open", run);
+}
+
+function attachTerminalOpen(ws, requestedId) {
   if (!existsSync(PTY_BRIDGE) || !existsSync(PYTHON)) {
-    ws.send("Terminal tidak siap: python3 atau pty-bridge.py tidak ada.\r\n");
-    ws.close();
+    sendJsonWs(ws, { type: "error", message: "Terminal tidak siap: python3 atau pty-bridge.py tidak ada." });
+    closeWsSoon(ws);
     return;
   }
 
-  let reuse = false;
-  let child = null;
-  if (persistentChild) {
-    try { persistentChild.kill(0); reuse = true; } catch { reuse = false; }
+  let session = requestedId ? termSessions.get(requestedId) : null;
+  if (requestedId && !session) {
+    sendJsonWs(ws, { type: "gone", id: requestedId });
+    closeWsSoon(ws);
+    return;
   }
-  if (reuse) {
-    child = persistentChild;
-    if (persistentKillTimeout) { clearTimeout(persistentKillTimeout); persistentKillTimeout = null; }
-  } else {
-    termCount += 1;
-    child = spawn(PYTHON, ["-u", PTY_BRIDGE], {
-      cwd: HOME,
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-        COLORTERM: "truecolor",
-        LANG: process.env.LANG || "C.UTF-8",
-        HOME,
-        SHELL: process.env.SHELL || "/bin/bash",
-        USER: process.env.USER || "gitgitmiko",
-        PWD: HOME,
-        PTY_ROWS: "24",
-        PTY_COLS: "80",
-      },
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-    });
-    persistentChild = child;
+  if (!session) {
+    if (termSessions.size >= MAX_TERM) {
+      sendJsonWs(ws, { type: "error", message: "Terlalu banyak sesi terminal. Tutup salah satu lalu coba lagi." });
+      closeWsSoon(ws, 1013, "too many terminals");
+      return;
+    }
+    session = createTermSession();
   }
 
-  let cleaned = false;
+  const replay = dumpTermBuffer(session).toString("base64");
+  session.clients.add(ws);
+  sendJsonWs(ws, { type: "session", id: session.id, title: session.title, replay });
+
   const ping = setInterval(() => {
     if (ws.readyState === ws.OPEN) ws.ping();
   }, 25000);
 
-  const cleanupWsOnly = () => {
-    if (cleaned) return;
-    cleaned = true;
+  const dropClient = () => {
     clearInterval(ping);
-    if (!reuse) {
-      termCount = Math.max(0, termCount - 1);
-      try { child.kill("SIGHUP"); } catch { /* ignore */ }
-    } else {
-      persistentKillTimeout = setTimeout(() => {
-        if (persistentChild) {
-          try { persistentChild.kill("SIGHUP"); } catch { /* ignore */ }
-          persistentChild = null;
-        }
-        persistentKillTimeout = null;
-      }, 60000);
-    }
+    session.clients.delete(ws);
   };
 
-  // Always attach new stdout/stderr handlers for the new ws (old ws won't match .OPEN)
-  child.stdout.on("data", (data) => {
-    if (ws.readyState === ws.OPEN) ws.send(data);
-  });
-  child.stderr.on("data", (data) => {
-    if (ws.readyState === ws.OPEN) ws.send(data);
-  });
-
-  child.on("error", (err) => {
-    if (ws.readyState === ws.OPEN) ws.send(`Gagal membuka terminal: ${err.message}\r\n`);
-    cleanupWsOnly();
-    ws.close();
-  });
-  child.on("exit", () => {
-    cleanupWsOnly();
-    if (ws.readyState === ws.OPEN) ws.close();
-  });
-  ws.on("close", () => {
-    cleanupWsOnly();
-  });
+  ws.on("close", dropClient);
+  ws.on("error", dropClient);
   ws.on("message", (raw, isBinary) => {
+    if (session.destroyed) return;
     const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
     if (!isBinary && text.startsWith("{")) {
       try {
         const msg = JSON.parse(text);
-        if (msg.type === "resize" && child.stdio[3]) {
-          child.stdio[3].write(`${JSON.stringify({ rows: Number(msg.rows) || 24, cols: Number(msg.cols) || 80 })}\n`);
+        if (msg.type === "close") {
+          destroyTermSession(session.id);
+          return;
+        }
+        if (msg.type === "resize" && session.child.stdio[3]) {
+          session.child.stdio[3].write(`${JSON.stringify({ rows: Number(msg.rows) || 24, cols: Number(msg.cols) || 80 })}\n`);
           return;
         }
       } catch {
         /* treat as input */
       }
     }
-    if (child.stdin.writable) child.stdin.write(isBinary ? raw : text);
+    if (session.child.stdin.writable) session.child.stdin.write(isBinary ? raw : text);
   });
 }
 const server = createServer(async (req, res) => {
@@ -506,6 +593,28 @@ const server = createServer(async (req, res) => {
     const token = readCookie(req, "dg_session");
     if (token) sessions.delete(token);
     send(res, 204, "", { "Set-Cookie": cookie("", 0) });
+    return;
+  }
+
+  if (path === `${base}/api/terminals` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    sendJson(res, 200, { ok: true, terminals: listTermSessions() });
+    return;
+  }
+
+  if (path.startsWith(`${base}/api/terminals/`) && req.method === "DELETE") {
+    if (!requireAuth(req, res)) return;
+    const id = path.slice(`${base}/api/terminals/`.length);
+    if (!/^[a-f0-9]{16}$/.test(id)) {
+      sendJson(res, 400, { ok: false, message: "Sesi tidak valid" });
+      return;
+    }
+    if (!termSessions.has(id)) {
+      sendJson(res, 404, { ok: false, message: "Sesi tidak ada" });
+      return;
+    }
+    destroyTermSession(id);
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -577,7 +686,7 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    attachTerminal(ws);
+    attachTerminal(ws, url.searchParams.get("id") || "");
   });
 });
 
