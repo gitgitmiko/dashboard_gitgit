@@ -346,58 +346,77 @@ function attachTerminal(ws) {
     return;
   }
 
-  termCount += 1;
-  let cleaned = false;
-  const child = spawn(PYTHON, ["-u", PTY_BRIDGE], {
-    cwd: HOME,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      LANG: process.env.LANG || "C.UTF-8",
-      HOME,
-      SHELL: process.env.SHELL || "/bin/bash",
-      USER: process.env.USER || "gitgitmiko",
-      PWD: HOME,
-      PTY_ROWS: "24",
-      PTY_COLS: "80",
-    },
-    stdio: ["pipe", "pipe", "pipe", "pipe"],
-  });
+  let reuse = false;
+  let child = null;
+  if (persistentChild) {
+    try { persistentChild.kill(0); reuse = true; } catch { reuse = false; }
+  }
+  if (reuse) {
+    child = persistentChild;
+    if (persistentKillTimeout) { clearTimeout(persistentKillTimeout); persistentKillTimeout = null; }
+  } else {
+    termCount += 1;
+    child = spawn(PYTHON, ["-u", PTY_BRIDGE], {
+      cwd: HOME,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+        LANG: process.env.LANG || "C.UTF-8",
+        HOME,
+        SHELL: process.env.SHELL || "/bin/bash",
+        USER: process.env.USER || "gitgitmiko",
+        PWD: HOME,
+        PTY_ROWS: "24",
+        PTY_COLS: "80",
+      },
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    persistentChild = child;
+  }
 
+  let cleaned = false;
   const ping = setInterval(() => {
     if (ws.readyState === ws.OPEN) ws.ping();
   }, 25000);
 
-  const cleanup = () => {
+  const cleanupWsOnly = () => {
     if (cleaned) return;
     cleaned = true;
     clearInterval(ping);
-    termCount = Math.max(0, termCount - 1);
-    try {
-      child.kill("SIGHUP");
-    } catch {
-      /* ignore */
+    if (!reuse) {
+      termCount = Math.max(0, termCount - 1);
+      try { child.kill("SIGHUP"); } catch { /* ignore */ }
+    } else {
+      persistentKillTimeout = setTimeout(() => {
+        if (persistentChild) {
+          try { persistentChild.kill("SIGHUP"); } catch { /* ignore */ }
+          persistentChild = null;
+        }
+        persistentKillTimeout = null;
+      }, 60000);
     }
   };
 
+  // Always attach new stdout/stderr handlers for the new ws (old ws won't match .OPEN)
   child.stdout.on("data", (data) => {
     if (ws.readyState === ws.OPEN) ws.send(data);
   });
   child.stderr.on("data", (data) => {
     if (ws.readyState === ws.OPEN) ws.send(data);
   });
+
   child.on("error", (err) => {
     if (ws.readyState === ws.OPEN) ws.send(`Gagal membuka terminal: ${err.message}\r\n`);
-    cleanup();
+    cleanupWsOnly();
     ws.close();
   });
   child.on("exit", () => {
-    cleanup();
+    cleanupWsOnly();
     if (ws.readyState === ws.OPEN) ws.close();
   });
   ws.on("close", () => {
-    cleanup();
+    cleanupWsOnly();
   });
   ws.on("message", (raw, isBinary) => {
     const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
@@ -415,7 +434,6 @@ function attachTerminal(ws) {
     if (child.stdin.writable) child.stdin.write(isBinary ? raw : text);
   });
 }
-
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const path = url.pathname.replace(/\/+$/, "") || "/";
