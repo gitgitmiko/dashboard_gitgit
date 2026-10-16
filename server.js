@@ -12,9 +12,36 @@ import { WebSocketServer } from "ws";
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
+
+function loadDotEnv(filePath) {
+  if (!existsSync(filePath)) return;
+  const text = readFileSync(filePath, "utf8");
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 1) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+loadDotEnv(join(__dirname, ".env"));
+
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4180);
 const BASE = (process.env.BASE_PATH || "/agen").replace(/\/+$/, "") || "/agen";
+if (!process.env.DASHBOARD_PASSWORD) {
+  console.warn("DASHBOARD_PASSWORD belum di-set; login akan selalu ditolak");
+}
 const HOME = osHomedir();
 const PYTHON = "/usr/bin/python3";
 const PTY_BRIDGE = join(__dirname, "pty-bridge.py");
