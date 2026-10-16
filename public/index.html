@@ -500,7 +500,7 @@
       ws.binaryType = "arraybuffer";
       ws.onopen = () => { setTermStatusFor(id, true, "Tersambung"); addon.fit(); if (pendingCd) { ws.send(`cd ${shellQuote(pendingCd)}\n`); pendingCd = ""; } };
       ws.onmessage = (ev) => { if (ev.data instanceof ArrayBuffer) t.write(new Uint8Array(ev.data)); else t.write(ev.data); };
-      ws.onclose = () => { setTermStatusFor(id, false, "Terputus"); };
+      ws.onclose = () => { setTermStatusFor(id, false, "Terputus"); setTimeout(() => { openTerminal(); showTab("terminal"); }, 2000); };
       ws.onerror = () => { setTermStatusFor(id, false, "Gagal"); };
 
       terminals[id] = { card, term: t, fitAddon: addon, ws, minimized: false, bodyDiv: document.querySelector(`#body-${id}`) };
