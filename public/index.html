@@ -162,7 +162,7 @@
       .top { flex-direction: row; align-items: flex-start; gap: 8px; }
       .top > div { min-width: 0; }
       .top h1 { overflow-wrap: anywhere; }
-      .tabs { display: grid; grid-template-columns: repeat(4, 1fr); }
+      .tabs { display: grid; grid-template-columns: repeat(3, 1fr); }
       .tabs button { padding: 10px 4px; }
       button.small, .term-btn { min-height: 38px; }
       .files-toolbar .path-input { flex: 1 1 100%; }
@@ -201,6 +201,7 @@
         <button class="ghost" type="button" data-tab="files">Folder</button>
         <button class="ghost" type="button" data-tab="terminal">Terminal</button>
         <button class="ghost" type="button" data-tab="logs">Log</button>
+        <button class="ghost" type="button" data-tab="cctv">CCTV</button>
       </nav>
 
       <div id="tab-overview">
@@ -299,6 +300,25 @@
           <pre class="preview" id="log-raw" style="max-height:60vh">Memuat…</pre>
         </section>
       </div>
+
+      <div id="tab-cctv" class="hidden">
+        <section class="card">
+          <div class="files-toolbar">
+            <label for="cctv-date" class="muted" style="font-size:0.88rem">Filter tanggal:</label>
+            <input id="cctv-date" type="date" />
+            <button class="ghost small" id="cctv-date-clear" type="button">10 terbaru</button>
+            <button class="ghost small" id="cctv-refresh" type="button">Muat ulang</button>
+          </div>
+          <p id="cctv-error" class="error"></p>
+          <p class="muted" id="cctv-caption" style="margin:0 0 10px"></p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tanggal</th><th>Jam</th><th>Ukuran</th><th>Diperbarui</th><th>Aksi</th></tr></thead>
+              <tbody id="cctv-rows"><tr><td colspan="5">Memuat…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </section>
   </main>
   <script src="/agen/vendor/xterm.js"></script>
@@ -369,8 +389,10 @@
       document.querySelector("#tab-files").classList.toggle("hidden", name !== "files");
       document.querySelector("#tab-terminal").classList.toggle("hidden", name !== "terminal");
       document.querySelector("#tab-logs").classList.toggle("hidden", name !== "logs");
+      document.querySelector("#tab-cctv").classList.toggle("hidden", name !== "cctv");
       activeTab = name;
       if (name === "logs") loadLogs();
+      if (name === "cctv") loadCctv();
       if (name === "files" && !entries.length) loadFiles(currentPath);
       if (name === "terminal") {
         ensureTerminals().then(() => {
@@ -547,6 +569,60 @@
     document.querySelector("#log-refresh").addEventListener("click", loadLogs);
     document.querySelector("#log-filter").addEventListener("input", renderLogRaw);
     document.querySelector("#log-watch-only").addEventListener("change", renderLogRaw);
+
+    let cctvBusy = false;
+    function cctvFileUrl(date, name, download) {
+      return `${base}/api/cctv/file?date=${encodeURIComponent(date)}&name=${encodeURIComponent(name)}${download ? "&download=1" : ""}`;
+    }
+    function renderCctv(data) {
+      const caption = document.querySelector("#cctv-caption");
+      const rows = data.recordings || [];
+      caption.textContent = data.date ? `Rekaman tanggal ${data.date} (${rows.length} jam)` : `${rows.length} rekaman terakhir`;
+      document.querySelector("#cctv-rows").innerHTML = rows.map((r) => `
+        <tr>
+          <td>${esc(r.date)}</td>
+          <td>${esc(r.hour || "—")}:00</td>
+          <td>${fmtBytes(r.size)}</td>
+          <td>${r.mtime ? new Date(r.mtime).toLocaleString("id-ID") : "—"}</td>
+          <td><button class="ghost small" type="button" data-cctv-dl="${esc(r.date)}|${esc(r.name)}">Unduh</button></td>
+        </tr>
+      `).join("") || `<tr><td colspan="5">Tidak ada rekaman.</td></tr>`;
+    }
+    async function loadCctv() {
+      if (cctvBusy) return;
+      cctvBusy = true;
+      const err = document.querySelector("#cctv-error");
+      const date = document.querySelector("#cctv-date").value;
+      try {
+        const res = await fetch(`${base}/api/cctv/recordings${date ? `?date=${encodeURIComponent(date)}` : ""}`, { cache: "no-store" });
+        if (res.status === 401) { show(false); return; }
+        const data = await res.json();
+        if (!res.ok) {
+          err.textContent = data.message || "Gagal memuat rekaman";
+          document.querySelector("#cctv-rows").innerHTML = `<tr><td colspan="5">—</td></tr>`;
+          document.querySelector("#cctv-caption").textContent = "";
+          return;
+        }
+        err.textContent = "";
+        renderCctv(data);
+      } catch {
+        err.textContent = "Gagal memuat rekaman";
+      } finally {
+        cctvBusy = false;
+      }
+    }
+    document.querySelector("#cctv-refresh").addEventListener("click", loadCctv);
+    document.querySelector("#cctv-date").addEventListener("change", loadCctv);
+    document.querySelector("#cctv-date-clear").addEventListener("click", () => {
+      document.querySelector("#cctv-date").value = "";
+      loadCctv();
+    });
+    document.querySelector("#cctv-rows").addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-cctv-dl]");
+      if (!btn) return;
+      const [date, name] = btn.dataset.cctvDl.split("|");
+      location.href = cctvFileUrl(date, name, true);
+    });
 
     function begin() {
       show(true);

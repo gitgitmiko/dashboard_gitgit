@@ -47,6 +47,9 @@ const PYTHON = "/usr/bin/python3";
 const PTY_BRIDGE = join(__dirname, "pty-bridge.py");
 const MAX_PREVIEW = 512 * 1024;
 const MAX_LIST = 4000;
+const CCTV_DIR = resolve(process.env.CCTV_REC_DIR || "/mnt/cctv");
+const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
 const MAX_TERM = 8;
 const TERM_BUFFER_MAX = 1024 * 1024;
 const sessions = new Map();
@@ -612,6 +615,114 @@ async function readCatalogLog(lines) {
   }
 }
 
+function cctvRecordingFromFile(dateDir, name, st) {
+  const hourMatch = /^(\d{2})-\d{2}-\d{2}\.mp4$/.exec(name);
+  return {
+    date: dateDir,
+    name,
+    hour: hourMatch ? hourMatch[1] : null,
+    started_at: `${dateDir}T${hourMatch ? hourMatch[1] : "00"}:00:00Z`,
+    size: st.size,
+    mtime: st.mtime.toISOString(),
+  };
+}
+
+async function listCctvDates() {
+  let names;
+  try {
+    names = await readdir(CCTV_DIR);
+  } catch (err) {
+    if (err.code === "ENOENT") return [];
+    throw httpError(500, err.message);
+  }
+  const dates = names.filter((n) => CCTV_DATE_RE.test(n));
+  dates.sort().reverse();
+  return dates;
+}
+
+async function listCctvRecordings(rawDate) {
+  const date = rawDate ? String(rawDate).trim() : "";
+  if (date && !CCTV_DATE_RE.test(date)) throw httpError(400, "Format tanggal salah (YYYY-MM-DD)");
+
+  if (date) {
+    const dir = join(CCTV_DIR, date);
+    let names;
+    try {
+      names = await readdir(dir);
+    } catch (err) {
+      if (err.code === "ENOENT") return { date, recordings: [] };
+      throw httpError(err.code === "EACCES" ? 403 : 500, err.message);
+    }
+    const out = [];
+    for (const name of names) {
+      if (!CCTV_FILE_RE.test(name)) continue;
+      try {
+        const st = await stat(join(dir, name));
+        out.push(cctvRecordingFromFile(date, name, st));
+      } catch {
+        /* lewati berkas yang hilang/rusak */
+      }
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return { date, recordings: out };
+  }
+
+  const dates = (await listCctvDates()).slice(0, 10);
+  const out = [];
+  for (const d of dates) {
+    const dir = join(CCTV_DIR, d);
+    let names;
+    try {
+      names = await readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!CCTV_FILE_RE.test(name)) continue;
+      try {
+        const st = await stat(join(dir, name));
+        out.push(cctvRecordingFromFile(d, name, st));
+      } catch {
+        /* lewati */
+      }
+    }
+  }
+  out.sort((a, b) => b.date.localeCompare(a.date) || b.name.localeCompare(a.name));
+  return { date: null, recordings: out.slice(0, 10) };
+}
+
+function resolveCctvFile(rawDate, rawName) {
+  const date = String(rawDate ?? "").trim();
+  const name = String(rawName ?? "").trim();
+  if (!CCTV_DATE_RE.test(date)) throw httpError(400, "Tanggal tidak valid");
+  if (!CCTV_FILE_RE.test(name)) throw httpError(400, "Nama berkas tidak valid");
+  const target = resolve(join(CCTV_DIR, date, name));
+  if (target !== join(CCTV_DIR, date, name)) throw httpError(400, "Path tidak valid");
+  return target;
+}
+
+async function sendCctvFile(req, res, rawDate, rawName, download) {
+  const target = resolveCctvFile(rawDate, rawName);
+  let st;
+  try {
+    st = await stat(target);
+  } catch (err) {
+    throw httpError(err.code === "ENOENT" ? 404 : err.code === "EACCES" ? 403 : 400, err.code === "ENOENT" ? "Rekaman tidak ditemukan" : "Tidak bisa dibuka");
+  }
+  if (!st.isFile()) throw httpError(400, "Bukan berkas rekaman");
+  const name = safeDownloadName(target);
+  res.writeHead(200, {
+    "Content-Type": "video/mp4",
+    "Content-Length": st.size,
+    "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${name}"`,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Accept-Ranges": "none",
+  });
+  if (req.method === "HEAD") { res.end(); return; }
+  createReadStream(target).pipe(res);
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -696,6 +807,36 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       sendJson(res, 200, { ok: true, ...(await readCatalogLog(Number(url.searchParams.get("lines")))) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/cctv/recordings` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await listCctvRecordings(url.searchParams.get("date"))) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/cctv/dates` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, dates: await listCctvDates() });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/cctv/file` && (req.method === "GET" || req.method === "HEAD")) {
+    if (!requireAuth(req, res)) return;
+    try {
+      await sendCctvFile(req, res, url.searchParams.get("date"), url.searchParams.get("name"), url.searchParams.get("download") === "1");
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
