@@ -665,32 +665,32 @@ async function listCctvFilesIn(date) {
   return out;
 }
 
+function localDateStr(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 async function listCctvRecordings(rawDate, rawPage, rawPageSize) {
-  const date = rawDate ? String(rawDate).trim() : "";
-  if (date && !CCTV_DATE_RE.test(date)) throw httpError(400, "Format tanggal salah (YYYY-MM-DD)");
+  const requested = rawDate ? String(rawDate).trim() : "";
+  if (requested && !CCTV_DATE_RE.test(requested)) throw httpError(400, "Format tanggal salah (YYYY-MM-DD)");
+  // Tanpa filter: tampilkan rekaman hari ini saja (waktu lokal server). Untuk
+  // tanggal lain, pengguna harus memakai filter tanggal secara eksplisit.
+  const date = requested || localDateStr();
 
   const pageSize = CCTV_PAGE_SIZES.includes(Number(rawPageSize)) ? Number(rawPageSize) : 10;
   const page = Math.max(1, Math.floor(Number(rawPage)) || 1);
 
-  let out;
-  if (date) {
-    out = await listCctvFilesIn(date);
-    out.sort((a, b) => a.name.localeCompare(b.name));
-  } else {
-    const dates = await listCctvDates();
-    out = [];
-    for (const d of dates) {
-      out.push(...(await listCctvFilesIn(d)));
-    }
-    out.sort((a, b) => b.date.localeCompare(a.date) || b.name.localeCompare(a.name));
-  }
+  const out = await listCctvFilesIn(date);
+  out.sort((a, b) => a.name.localeCompare(b.name));
 
   const total = out.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * pageSize;
   return {
-    date: date || null,
+    date,
     recordings: out.slice(start, start + pageSize),
     total,
     page: safePage,

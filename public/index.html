@@ -308,7 +308,7 @@
           <div class="files-toolbar">
             <label for="cctv-date" class="muted" style="font-size:0.88rem">Filter tanggal:</label>
             <input id="cctv-date" type="date" />
-            <button class="ghost small" id="cctv-date-clear" type="button">Hapus filter</button>
+            <button class="ghost small" id="cctv-date-clear" type="button">Hari ini</button>
             <button class="ghost small" id="cctv-refresh" type="button">Muat ulang</button>
             <label for="cctv-page-size" class="muted" style="font-size:0.88rem;margin-left:auto">Baris:</label>
             <select id="cctv-page-size" style="width:auto">
@@ -597,7 +597,8 @@
       cctvPage = data.page || 1;
       cctvTotalPages = data.totalPages || 1;
       const total = data.total ?? rows.length;
-      caption.textContent = data.date ? `Rekaman tanggal ${data.date} (${total} jam)` : `${total} rekaman`;
+      if (data.date) document.querySelector("#cctv-date").value = data.date;
+      caption.textContent = `Rekaman tanggal ${data.date} (${total} jam)`;
       document.querySelector("#cctv-rows").innerHTML = rows.map((r) => `
         <tr>
           <td>${esc(r.date)}</td>
