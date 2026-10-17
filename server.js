@@ -548,6 +548,70 @@ function attachTerminalOpen(ws, requestedId) {
     if (session.child.stdin.writable) session.child.stdin.write(isBinary ? raw : text);
   });
 }
+const CATALOG_LOG = process.env.CATALOG_LOG || join(HOME, "cron", "scraper", "scraper.log");
+const LOG_TAIL_BYTES = 512 * 1024;
+const WATCH_RE = /^\[watch\] (\S+) (.*)$/;
+
+function summarizeRun(run) {
+  const msgs = run.events.map((e) => e.msg);
+  const has = (re) => msgs.some((m) => re.test(m));
+  if (has(/lewati/)) return "skipped";
+  if (has(/gagal|cek gagal/)) return "failed";
+  if (has(/^selesai \(fail=0\)/)) return "synced";
+  if (has(/^selesai/)) return "partial";
+  if (has(/tidak ada konten baru/)) return "nochange";
+  return "running";
+}
+
+async function readCatalogLog(lines) {
+  const want = Math.max(20, Math.min(2000, lines || 300));
+  let handle;
+  try {
+    handle = await open(CATALOG_LOG, "r");
+  } catch {
+    const err = new Error(`Log tidak ditemukan: ${CATALOG_LOG}`);
+    err.status = 404;
+    throw err;
+  }
+  try {
+    const st = await handle.stat();
+    const len = Math.min(st.size, LOG_TAIL_BYTES);
+    const buf = Buffer.alloc(len);
+    await handle.read(buf, 0, len, st.size - len);
+    let all = buf.toString("utf8").split("\n");
+    if (st.size > len) all.shift();
+    if (all[all.length - 1] === "") all.pop();
+    const runs = [];
+    for (const line of all) {
+      const m = WATCH_RE.exec(line);
+      if (!m) continue;
+      const [, ts, msg] = m;
+      if (msg === "pull kode" || !runs.length || /lewati/.test(msg)) {
+        runs.push({ start: ts, end: ts, events: [] });
+      }
+      const run = runs[runs.length - 1];
+      run.end = ts;
+      run.events.push({ ts, msg });
+    }
+    const recent = runs.slice(-30).reverse().map((r) => ({
+      start: r.start,
+      end: r.end,
+      status: summarizeRun(r),
+      events: r.events,
+    }));
+    return {
+      path: CATALOG_LOG,
+      size: st.size,
+      mtime: st.mtimeMs,
+      truncated: st.size > len,
+      runs: recent,
+      lines: all.slice(-want),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -624,6 +688,16 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...(await collectStats()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/logs` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await readCatalogLog(Number(url.searchParams.get("lines")))) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }

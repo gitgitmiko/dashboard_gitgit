@@ -131,6 +131,14 @@
       padding: 8px;
       overflow: hidden;
     }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 0.8rem; font-weight: 600; border: 1px solid var(--line); white-space: nowrap; }
+    .badge.synced { color: var(--accent); border-color: var(--accent); }
+    .badge.nochange, .badge.skipped { color: var(--muted); }
+    .badge.running, .badge.partial { color: var(--warn); border-color: var(--warn); }
+    .badge.failed { color: var(--hot); border-color: var(--hot); }
+    .run-events { color: var(--muted); font-size: 0.82rem; margin-top: 4px; }
+    #log-raw .l-watch { color: var(--accent); }
+    #log-raw .l-err { color: var(--hot); }
     .status-dot { width: 8px; height: 8px; border-radius: 99px; background: var(--hot); display: inline-block; }
     .status-dot.on { background: var(--accent); }
     .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -154,8 +162,8 @@
       .top { flex-direction: row; align-items: flex-start; gap: 8px; }
       .top > div { min-width: 0; }
       .top h1 { overflow-wrap: anywhere; }
-      .tabs { display: grid; grid-template-columns: repeat(3, 1fr); }
-      .tabs button { padding: 10px 6px; }
+      .tabs { display: grid; grid-template-columns: repeat(4, 1fr); }
+      .tabs button { padding: 10px 4px; }
       button.small, .term-btn { min-height: 38px; }
       .files-toolbar .path-input { flex: 1 1 100%; }
       th, td { padding: 8px 4px; font-size: 0.85rem; }
@@ -192,6 +200,7 @@
         <button class="ghost active" type="button" data-tab="overview">Ringkasan</button>
         <button class="ghost" type="button" data-tab="files">Folder</button>
         <button class="ghost" type="button" data-tab="terminal">Terminal</button>
+        <button class="ghost" type="button" data-tab="logs">Log</button>
       </nav>
 
       <div id="tab-overview">
@@ -261,6 +270,35 @@
           <div id="term-container" style="display:flex;flex-direction:column;gap:8px;"></div>
         </section>
       </div>
+
+      <div id="tab-logs" class="hidden">
+        <div class="grid log-summary">
+          <article class="card metric"><span>Run terakhir</span><strong id="log-last">—</strong><p class="muted" id="log-last-detail"></p></article>
+          <article class="card metric"><span>Run berikutnya</span><strong id="log-next">—</strong><p class="muted">cron tiap 30 menit</p></article>
+          <article class="card metric"><span>Sync (30 run)</span><strong id="log-synced">—</strong><p class="muted" id="log-synced-detail"></p></article>
+          <article class="card metric"><span>Gagal (30 run)</span><strong id="log-failed">—</strong><p class="muted" id="log-size"></p></article>
+        </div>
+        <section class="card">
+          <h2>Riwayat run</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Mulai</th><th>Durasi</th><th>Hasil</th></tr></thead>
+              <tbody id="log-runs"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Log mentah</h2>
+          <div class="files-toolbar">
+            <input id="log-filter" placeholder="Saring baris…" style="flex:1 1 180px;width:auto" />
+            <label style="display:flex;gap:6px;align-items:center"><input id="log-watch-only" type="checkbox" style="width:auto" /> hanya [watch]</label>
+            <label style="display:flex;gap:6px;align-items:center"><input id="log-auto" type="checkbox" checked style="width:auto" /> otomatis</label>
+            <button class="ghost small" id="log-refresh" type="button">Muat ulang</button>
+          </div>
+          <p id="log-error" class="error"></p>
+          <pre class="preview" id="log-raw" style="max-height:60vh">Memuat…</pre>
+        </section>
+      </div>
     </section>
   </main>
   <script src="/agen/vendor/xterm.js"></script>
@@ -279,6 +317,9 @@
     let pendingCd = "";
     let terminals = {};
     let restorePromise = null;
+    let activeTab = "overview";
+    let logData = null;
+    let logBusy = false;
 
     function esc(s) {
       return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -327,6 +368,9 @@
       document.querySelector("#tab-overview").classList.toggle("hidden", name !== "overview");
       document.querySelector("#tab-files").classList.toggle("hidden", name !== "files");
       document.querySelector("#tab-terminal").classList.toggle("hidden", name !== "terminal");
+      document.querySelector("#tab-logs").classList.toggle("hidden", name !== "logs");
+      activeTab = name;
+      if (name === "logs") loadLogs();
       if (name === "files" && !entries.length) loadFiles(currentPath);
       if (name === "terminal") {
         ensureTerminals().then(() => {
@@ -432,6 +476,77 @@
       }
       box.textContent = `${data.truncated ? `[Pratinjau dipotong]\n\n` : ""}${data.content || ""}`;
     }
+
+    const RUN_LABEL = { synced: "Sync selesai", nochange: "Tidak ada konten baru", skipped: "Dilewati (masih jalan)", failed: "Gagal", partial: "Selesai sebagian", running: "Berjalan" };
+    function fmtClock(iso) {
+      return new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+    function fmtSpan(a, b) {
+      const s = Math.max(0, Math.round((new Date(b) - new Date(a)) / 1000));
+      if (s < 60) return `${s} dtk`;
+      return `${Math.floor(s / 60)} mnt ${s % 60} dtk`;
+    }
+    function renderLogRaw() {
+      if (!logData) return;
+      const q = document.querySelector("#log-filter").value.trim().toLowerCase();
+      const watchOnly = document.querySelector("#log-watch-only").checked;
+      const box = document.querySelector("#log-raw");
+      const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      const rows = logData.lines.filter((l) => (!watchOnly || l.startsWith("[watch]")) && (!q || l.toLowerCase().includes(q)));
+      box.innerHTML = rows.map((l) => {
+        const cls = l.startsWith("[watch]") ? (/gagal/.test(l) ? "l-err" : "l-watch") : /error|fail|gagal/i.test(l) ? "l-err" : "";
+        return `<span class="${cls}">${esc(l)}</span>`;
+      }).join("\n") || "Tidak ada baris.";
+      if (stick) box.scrollTop = box.scrollHeight;
+    }
+    function renderLogs() {
+      const d = logData;
+      if (!d) return;
+      const runs = d.runs;
+      const last = runs[0];
+      document.querySelector("#log-last").innerHTML = last ? `<span class="badge ${last.status}">${RUN_LABEL[last.status]}</span>` : "—";
+      document.querySelector("#log-last-detail").textContent = last ? `${fmtClock(last.start)} · ${fmtSpan(last.start, last.end)}` : "Belum ada run";
+      const now = new Date();
+      const next = new Date(now);
+      next.setSeconds(0, 0);
+      next.setMinutes(now.getMinutes() < 30 ? 30 : 60);
+      document.querySelector("#log-next").textContent = next.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+      const synced = runs.filter((r) => r.status === "synced" || r.status === "partial").length;
+      const failed = runs.filter((r) => r.status === "failed").length;
+      document.querySelector("#log-synced").textContent = synced;
+      document.querySelector("#log-synced-detail").textContent = `${runs.length - synced - failed} tanpa perubahan`;
+      document.querySelector("#log-failed").textContent = failed;
+      document.querySelector("#log-size").textContent = `log ${fmtBytes(d.size)}`;
+      document.querySelector("#log-runs").innerHTML = runs.map((r) => `
+        <tr><td>${esc(fmtClock(r.start))}</td><td>${esc(fmtSpan(r.start, r.end))}</td>
+        <td><span class="badge ${r.status}">${RUN_LABEL[r.status]}</span>
+        ${r.status === "failed" || r.status === "partial" ? `<div class="run-events">${esc(r.events.filter((e) => /gagal/.test(e.msg)).map((e) => e.msg).join("; ") || r.events[r.events.length - 1].msg)}</div>` : ""}</td></tr>`).join("") || "<tr><td colspan='3'>Belum ada run</td></tr>";
+      renderLogRaw();
+    }
+    async function loadLogs() {
+      if (logBusy) return;
+      logBusy = true;
+      const err = document.querySelector("#log-error");
+      try {
+        const res = await fetch(`${base}/api/logs?lines=500`, { cache: "no-store" });
+        if (res.status === 401) { show(false); return; }
+        const data = await res.json();
+        if (!res.ok) { err.textContent = data.message || "Gagal memuat log"; return; }
+        err.textContent = "";
+        logData = data;
+        renderLogs();
+      } catch {
+        err.textContent = "Gagal memuat log";
+      } finally {
+        logBusy = false;
+      }
+    }
+    setInterval(() => {
+      if (activeTab === "logs" && !document.hidden && document.querySelector("#log-auto").checked) loadLogs();
+    }, 5000);
+    document.querySelector("#log-refresh").addEventListener("click", loadLogs);
+    document.querySelector("#log-filter").addEventListener("input", renderLogRaw);
+    document.querySelector("#log-watch-only").addEventListener("change", renderLogRaw);
 
     function begin() {
       show(true);
