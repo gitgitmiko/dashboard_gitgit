@@ -6,7 +6,7 @@ ENV_FILE="$(dirname "$0")/cctv.env"
 REC_DIR="${CCTV_REC_DIR:-/mnt/cctv}"
 DAYS="${CCTV_RETENTION_DAYS:-30}"
 LOG="${CCTV_LOG:-/home/gitgitmiko/cron/cctv/recorder.log}"
-log() { echo "[retention] $(date -u +%FT%TZ) $*" >> "$LOG"; }
+log() { echo "[retention] $(date +%FT%T%z) $*" >> "$LOG"; }
 
 mountpoint -q "$REC_DIR" || { log "lewati: $REC_DIR tidak ter-mount"; exit 0; }
 

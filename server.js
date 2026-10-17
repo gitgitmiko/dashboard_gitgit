@@ -621,7 +621,8 @@ function cctvRecordingFromFile(dateDir, name, st) {
     date: dateDir,
     name,
     hour: hourMatch ? hourMatch[1] : null,
-    started_at: `${dateDir}T${hourMatch ? hourMatch[1] : "00"}:00:00Z`,
+    // Nama folder/berkas memakai waktu lokal server (WIB), bukan UTC, jadi tidak diberi akhiran "Z".
+    started_at: `${dateDir}T${hourMatch ? hourMatch[1] : "00"}:00:00`,
     size: st.size,
     mtime: st.mtime.toISOString(),
   };
