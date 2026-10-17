@@ -39,7 +39,7 @@
     }
     form { display: grid; gap: 12px; max-width: 380px; }
     label { font-size: 0.9rem; color: var(--muted); }
-    input, .path-input {
+    input, .path-input, select {
       width: 100%;
       border: 1px solid var(--line);
       background: #121812;
@@ -48,6 +48,8 @@
       padding: 12px 14px;
       font: inherit;
     }
+    select { padding: 8px 10px; }
+    #cctv-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
     button {
       border: 0;
       border-radius: 10px;
@@ -306,8 +308,15 @@
           <div class="files-toolbar">
             <label for="cctv-date" class="muted" style="font-size:0.88rem">Filter tanggal:</label>
             <input id="cctv-date" type="date" />
-            <button class="ghost small" id="cctv-date-clear" type="button">10 terbaru</button>
+            <button class="ghost small" id="cctv-date-clear" type="button">Hapus filter</button>
             <button class="ghost small" id="cctv-refresh" type="button">Muat ulang</button>
+            <label for="cctv-page-size" class="muted" style="font-size:0.88rem;margin-left:auto">Baris:</label>
+            <select id="cctv-page-size" style="width:auto">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
           </div>
           <p id="cctv-error" class="error"></p>
           <p class="muted" id="cctv-caption" style="margin:0 0 10px"></p>
@@ -316,6 +325,11 @@
               <thead><tr><th>Tanggal</th><th>Jam</th><th>Ukuran</th><th>Diperbarui</th><th>Aksi</th></tr></thead>
               <tbody id="cctv-rows"><tr><td colspan="5">Memuat…</td></tr></tbody>
             </table>
+          </div>
+          <div class="files-toolbar" id="cctv-pagination" style="margin-top:10px;margin-bottom:0">
+            <button class="ghost small" id="cctv-prev" type="button">‹ Sebelumnya</button>
+            <span class="muted" id="cctv-page-info" style="font-size:0.88rem"></span>
+            <button class="ghost small" id="cctv-next" type="button">Berikutnya ›</button>
           </div>
         </section>
       </div>
@@ -571,13 +585,19 @@
     document.querySelector("#log-watch-only").addEventListener("change", renderLogRaw);
 
     let cctvBusy = false;
+    let cctvPage = 1;
+    let cctvPageSize = 10;
+    let cctvTotalPages = 1;
     function cctvFileUrl(date, name, download) {
       return `${base}/api/cctv/file?date=${encodeURIComponent(date)}&name=${encodeURIComponent(name)}${download ? "&download=1" : ""}`;
     }
     function renderCctv(data) {
       const caption = document.querySelector("#cctv-caption");
       const rows = data.recordings || [];
-      caption.textContent = data.date ? `Rekaman tanggal ${data.date} (${rows.length} jam)` : `${rows.length} rekaman terakhir`;
+      cctvPage = data.page || 1;
+      cctvTotalPages = data.totalPages || 1;
+      const total = data.total ?? rows.length;
+      caption.textContent = data.date ? `Rekaman tanggal ${data.date} (${total} jam)` : `${total} rekaman`;
       document.querySelector("#cctv-rows").innerHTML = rows.map((r) => `
         <tr>
           <td>${esc(r.date)}</td>
@@ -587,20 +607,26 @@
           <td><button class="ghost small" type="button" data-cctv-dl="${esc(r.date)}|${esc(r.name)}">Unduh</button></td>
         </tr>
       `).join("") || `<tr><td colspan="5">Tidak ada rekaman.</td></tr>`;
+      document.querySelector("#cctv-page-info").textContent = `Hal ${cctvPage} / ${cctvTotalPages}`;
+      document.querySelector("#cctv-prev").disabled = cctvPage <= 1;
+      document.querySelector("#cctv-next").disabled = cctvPage >= cctvTotalPages;
     }
     async function loadCctv() {
       if (cctvBusy) return;
       cctvBusy = true;
       const err = document.querySelector("#cctv-error");
       const date = document.querySelector("#cctv-date").value;
+      const qs = new URLSearchParams({ page: String(cctvPage), pageSize: String(cctvPageSize) });
+      if (date) qs.set("date", date);
       try {
-        const res = await fetch(`${base}/api/cctv/recordings${date ? `?date=${encodeURIComponent(date)}` : ""}`, { cache: "no-store" });
+        const res = await fetch(`${base}/api/cctv/recordings?${qs}`, { cache: "no-store" });
         if (res.status === 401) { show(false); return; }
         const data = await res.json();
         if (!res.ok) {
           err.textContent = data.message || "Gagal memuat rekaman";
           document.querySelector("#cctv-rows").innerHTML = `<tr><td colspan="5">—</td></tr>`;
           document.querySelector("#cctv-caption").textContent = "";
+          document.querySelector("#cctv-page-info").textContent = "";
           return;
         }
         err.textContent = "";
@@ -611,11 +637,23 @@
         cctvBusy = false;
       }
     }
-    document.querySelector("#cctv-refresh").addEventListener("click", loadCctv);
-    document.querySelector("#cctv-date").addEventListener("change", loadCctv);
+    document.querySelector("#cctv-refresh").addEventListener("click", () => { cctvPage = 1; loadCctv(); });
+    document.querySelector("#cctv-date").addEventListener("change", () => { cctvPage = 1; loadCctv(); });
     document.querySelector("#cctv-date-clear").addEventListener("click", () => {
       document.querySelector("#cctv-date").value = "";
+      cctvPage = 1;
       loadCctv();
+    });
+    document.querySelector("#cctv-page-size").addEventListener("change", (event) => {
+      cctvPageSize = Number(event.target.value) || 10;
+      cctvPage = 1;
+      loadCctv();
+    });
+    document.querySelector("#cctv-prev").addEventListener("click", () => {
+      if (cctvPage > 1) { cctvPage -= 1; loadCctv(); }
+    });
+    document.querySelector("#cctv-next").addEventListener("click", () => {
+      if (cctvPage < cctvTotalPages) { cctvPage += 1; loadCctv(); }
     });
     document.querySelector("#cctv-rows").addEventListener("click", (event) => {
       const btn = event.target.closest("[data-cctv-dl]");

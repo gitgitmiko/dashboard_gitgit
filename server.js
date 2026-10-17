@@ -640,55 +640,62 @@ async function listCctvDates() {
   return dates;
 }
 
-async function listCctvRecordings(rawDate) {
+const CCTV_PAGE_SIZES = [10, 25, 50, 100];
+
+async function listCctvFilesIn(date) {
+  const dir = join(CCTV_DIR, date);
+  let names;
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    if (err.code === "ENOENT") return [];
+    throw httpError(err.code === "EACCES" ? 403 : 500, err.message);
+  }
+  const out = [];
+  for (const name of names) {
+    if (!CCTV_FILE_RE.test(name)) continue;
+    try {
+      const st = await stat(join(dir, name));
+      out.push(cctvRecordingFromFile(date, name, st));
+    } catch {
+      /* lewati berkas yang hilang/rusak */
+    }
+  }
+  return out;
+}
+
+async function listCctvRecordings(rawDate, rawPage, rawPageSize) {
   const date = rawDate ? String(rawDate).trim() : "";
   if (date && !CCTV_DATE_RE.test(date)) throw httpError(400, "Format tanggal salah (YYYY-MM-DD)");
 
+  const pageSize = CCTV_PAGE_SIZES.includes(Number(rawPageSize)) ? Number(rawPageSize) : 10;
+  const page = Math.max(1, Math.floor(Number(rawPage)) || 1);
+
+  let out;
   if (date) {
-    const dir = join(CCTV_DIR, date);
-    let names;
-    try {
-      names = await readdir(dir);
-    } catch (err) {
-      if (err.code === "ENOENT") return { date, recordings: [] };
-      throw httpError(err.code === "EACCES" ? 403 : 500, err.message);
-    }
-    const out = [];
-    for (const name of names) {
-      if (!CCTV_FILE_RE.test(name)) continue;
-      try {
-        const st = await stat(join(dir, name));
-        out.push(cctvRecordingFromFile(date, name, st));
-      } catch {
-        /* lewati berkas yang hilang/rusak */
-      }
-    }
+    out = await listCctvFilesIn(date);
     out.sort((a, b) => a.name.localeCompare(b.name));
-    return { date, recordings: out };
+  } else {
+    const dates = await listCctvDates();
+    out = [];
+    for (const d of dates) {
+      out.push(...(await listCctvFilesIn(d)));
+    }
+    out.sort((a, b) => b.date.localeCompare(a.date) || b.name.localeCompare(a.name));
   }
 
-  const dates = (await listCctvDates()).slice(0, 10);
-  const out = [];
-  for (const d of dates) {
-    const dir = join(CCTV_DIR, d);
-    let names;
-    try {
-      names = await readdir(dir);
-    } catch {
-      continue;
-    }
-    for (const name of names) {
-      if (!CCTV_FILE_RE.test(name)) continue;
-      try {
-        const st = await stat(join(dir, name));
-        out.push(cctvRecordingFromFile(d, name, st));
-      } catch {
-        /* lewati */
-      }
-    }
-  }
-  out.sort((a, b) => b.date.localeCompare(a.date) || b.name.localeCompare(a.name));
-  return { date: null, recordings: out.slice(0, 10) };
+  const total = out.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  return {
+    date: date || null,
+    recordings: out.slice(start, start + pageSize),
+    total,
+    page: safePage,
+    pageSize,
+    totalPages,
+  };
 }
 
 function resolveCctvFile(rawDate, rawName) {
@@ -816,7 +823,7 @@ const server = createServer(async (req, res) => {
   if (path === `${base}/api/cctv/recordings` && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
-      sendJson(res, 200, { ok: true, ...(await listCctvRecordings(url.searchParams.get("date"))) });
+      sendJson(res, 200, { ok: true, ...(await listCctvRecordings(url.searchParams.get("date"), url.searchParams.get("page"), url.searchParams.get("pageSize"))) });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
