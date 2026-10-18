@@ -47,6 +47,7 @@ const PYTHON = "/usr/bin/python3";
 const PTY_BRIDGE = join(__dirname, "pty-bridge.py");
 const MAX_PREVIEW = 512 * 1024;
 const MAX_LIST = 4000;
+const PAGE_SIZES = [10, 25, 50, 100];
 const CCTV_DIR = resolve(process.env.CCTV_REC_DIR || "/mnt/cctv");
 const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
@@ -566,8 +567,10 @@ function summarizeRun(run) {
   return "running";
 }
 
-async function readCatalogLog(lines) {
+async function readCatalogLog(lines, rawPage, rawPageSize) {
   const want = Math.max(20, Math.min(2000, lines || 300));
+  const pageSize = PAGE_SIZES.includes(Number(rawPageSize)) ? Number(rawPageSize) : 10;
+  const page = Math.max(1, Math.floor(Number(rawPage)) || 1);
   let handle;
   try {
     handle = await open(CATALOG_LOG, "r");
@@ -596,18 +599,38 @@ async function readCatalogLog(lines) {
       run.end = ts;
       run.events.push({ ts, msg });
     }
-    const recent = runs.slice(-30).reverse().map((r) => ({
+    const allRuns = runs.reverse().map((r) => ({
       start: r.start,
       end: r.end,
       status: summarizeRun(r),
       events: r.events,
     }));
+    const total = allRuns.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * pageSize;
+
+    // Ringkasan (kartu atas) selalu dihitung dari jendela run terbaru, terpisah
+    // dari halaman yang sedang dilihat, supaya tidak berubah saat pindah halaman.
+    const windowRuns = allRuns.slice(0, Math.min(30, total));
+    const summary = {
+      last: allRuns[0] || null,
+      windowSize: windowRuns.length,
+      synced: windowRuns.filter((r) => r.status === "synced" || r.status === "partial").length,
+      failed: windowRuns.filter((r) => r.status === "failed").length,
+    };
+
     return {
       path: CATALOG_LOG,
       size: st.size,
       mtime: st.mtimeMs,
       truncated: st.size > len,
-      runs: recent,
+      runs: allRuns.slice(start, start + pageSize),
+      runsTotal: total,
+      page: safePage,
+      pageSize,
+      totalPages,
+      summary,
       lines: all.slice(-want),
     };
   } finally {
@@ -640,8 +663,6 @@ async function listCctvDates() {
   dates.sort().reverse();
   return dates;
 }
-
-const CCTV_PAGE_SIZES = [10, 25, 50, 100];
 
 async function listCctvFilesIn(date) {
   const dir = join(CCTV_DIR, date);
@@ -679,7 +700,7 @@ async function listCctvRecordings(rawDate, rawPage, rawPageSize) {
   // tanggal lain, pengguna harus memakai filter tanggal secara eksplisit.
   const date = requested || localDateStr();
 
-  const pageSize = CCTV_PAGE_SIZES.includes(Number(rawPageSize)) ? Number(rawPageSize) : 10;
+  const pageSize = PAGE_SIZES.includes(Number(rawPageSize)) ? Number(rawPageSize) : 10;
   const page = Math.max(1, Math.floor(Number(rawPage)) || 1);
 
   const out = await listCctvFilesIn(date);
@@ -814,7 +835,7 @@ const server = createServer(async (req, res) => {
   if (path === `${base}/api/logs` && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
-      sendJson(res, 200, { ok: true, ...(await readCatalogLog(Number(url.searchParams.get("lines")))) });
+      sendJson(res, 200, { ok: true, ...(await readCatalogLog(Number(url.searchParams.get("lines")), url.searchParams.get("page"), url.searchParams.get("pageSize"))) });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }

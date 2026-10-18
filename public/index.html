@@ -49,7 +49,7 @@
       font: inherit;
     }
     select { padding: 8px 10px; }
-    #cctv-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #cctv-pagination button:disabled, #log-runs-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
     button {
       border: 0;
       border-radius: 10px;
@@ -278,16 +278,30 @@
         <div class="grid log-summary">
           <article class="card metric"><span>Run terakhir</span><strong id="log-last">—</strong><p class="muted" id="log-last-detail"></p></article>
           <article class="card metric"><span>Run berikutnya</span><strong id="log-next">—</strong><p class="muted">cron tiap 30 menit</p></article>
-          <article class="card metric"><span>Sync (30 run)</span><strong id="log-synced">—</strong><p class="muted" id="log-synced-detail"></p></article>
-          <article class="card metric"><span>Gagal (30 run)</span><strong id="log-failed">—</strong><p class="muted" id="log-size"></p></article>
+          <article class="card metric"><span id="log-synced-label">Sync</span><strong id="log-synced">—</strong><p class="muted" id="log-synced-detail"></p></article>
+          <article class="card metric"><span id="log-failed-label">Gagal</span><strong id="log-failed">—</strong><p class="muted" id="log-size"></p></article>
         </div>
         <section class="card">
           <h2>Riwayat run</h2>
+          <div class="files-toolbar">
+            <label for="log-runs-page-size" class="muted" style="font-size:0.88rem;margin-left:auto">Baris:</label>
+            <select id="log-runs-page-size" style="width:auto">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Mulai</th><th>Durasi</th><th>Hasil</th></tr></thead>
               <tbody id="log-runs"></tbody>
             </table>
+          </div>
+          <div class="files-toolbar" id="log-runs-pagination" style="margin-top:10px;margin-bottom:0">
+            <button class="ghost small" id="log-runs-prev" type="button">‹ Sebelumnya</button>
+            <span class="muted" id="log-runs-page-info" style="font-size:0.88rem"></span>
+            <button class="ghost small" id="log-runs-next" type="button">Berikutnya ›</button>
           </div>
         </section>
         <section class="card">
@@ -354,6 +368,9 @@
     let activeTab = "overview";
     let logData = null;
     let logBusy = false;
+    let logRunsPage = 1;
+    let logRunsPageSize = 10;
+    let logRunsTotalPages = 1;
 
     function esc(s) {
       return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -538,8 +555,8 @@
     function renderLogs() {
       const d = logData;
       if (!d) return;
-      const runs = d.runs;
-      const last = runs[0];
+      const summary = d.summary || {};
+      const last = summary.last;
       document.querySelector("#log-last").innerHTML = last ? `<span class="badge ${last.status}">${RUN_LABEL[last.status]}</span>` : "—";
       document.querySelector("#log-last-detail").textContent = last ? `${fmtClock(last.start)} · ${fmtSpan(last.start, last.end)}` : "Belum ada run";
       const now = new Date();
@@ -547,16 +564,25 @@
       next.setSeconds(0, 0);
       next.setMinutes(now.getMinutes() < 30 ? 30 : 60);
       document.querySelector("#log-next").textContent = next.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-      const synced = runs.filter((r) => r.status === "synced" || r.status === "partial").length;
-      const failed = runs.filter((r) => r.status === "failed").length;
+      const windowSize = summary.windowSize || 0;
+      const synced = summary.synced || 0;
+      const failed = summary.failed || 0;
+      document.querySelector("#log-synced-label").textContent = `Sync (${windowSize} run)`;
+      document.querySelector("#log-failed-label").textContent = `Gagal (${windowSize} run)`;
       document.querySelector("#log-synced").textContent = synced;
-      document.querySelector("#log-synced-detail").textContent = `${runs.length - synced - failed} tanpa perubahan`;
+      document.querySelector("#log-synced-detail").textContent = `${windowSize - synced - failed} tanpa perubahan`;
       document.querySelector("#log-failed").textContent = failed;
       document.querySelector("#log-size").textContent = `log ${fmtBytes(d.size)}`;
+      const runs = d.runs || [];
+      logRunsPage = d.page || 1;
+      logRunsTotalPages = d.totalPages || 1;
       document.querySelector("#log-runs").innerHTML = runs.map((r) => `
         <tr><td>${esc(fmtClock(r.start))}</td><td>${esc(fmtSpan(r.start, r.end))}</td>
         <td><span class="badge ${r.status}">${RUN_LABEL[r.status]}</span>
         ${r.status === "failed" || r.status === "partial" ? `<div class="run-events">${esc(r.events.filter((e) => /gagal/.test(e.msg)).map((e) => e.msg).join("; ") || r.events[r.events.length - 1].msg)}</div>` : ""}</td></tr>`).join("") || "<tr><td colspan='3'>Belum ada run</td></tr>";
+      document.querySelector("#log-runs-page-info").textContent = `Hal ${logRunsPage} / ${logRunsTotalPages}`;
+      document.querySelector("#log-runs-prev").disabled = logRunsPage <= 1;
+      document.querySelector("#log-runs-next").disabled = logRunsPage >= logRunsTotalPages;
       renderLogRaw();
     }
     async function loadLogs() {
@@ -564,7 +590,8 @@
       logBusy = true;
       const err = document.querySelector("#log-error");
       try {
-        const res = await fetch(`${base}/api/logs?lines=500`, { cache: "no-store" });
+        const qs = new URLSearchParams({ lines: "500", page: String(logRunsPage), pageSize: String(logRunsPageSize) });
+        const res = await fetch(`${base}/api/logs?${qs}`, { cache: "no-store" });
         if (res.status === 401) { show(false); return; }
         const data = await res.json();
         if (!res.ok) { err.textContent = data.message || "Gagal memuat log"; return; }
@@ -583,6 +610,17 @@
     document.querySelector("#log-refresh").addEventListener("click", loadLogs);
     document.querySelector("#log-filter").addEventListener("input", renderLogRaw);
     document.querySelector("#log-watch-only").addEventListener("change", renderLogRaw);
+    document.querySelector("#log-runs-page-size").addEventListener("change", (event) => {
+      logRunsPageSize = Number(event.target.value) || 10;
+      logRunsPage = 1;
+      loadLogs();
+    });
+    document.querySelector("#log-runs-prev").addEventListener("click", () => {
+      if (logRunsPage > 1) { logRunsPage -= 1; loadLogs(); }
+    });
+    document.querySelector("#log-runs-next").addEventListener("click", () => {
+      if (logRunsPage < logRunsTotalPages) { logRunsPage += 1; loadLogs(); }
+    });
 
     let cctvBusy = false;
     let cctvPage = 1;
