@@ -683,7 +683,7 @@ async function listCctvRecordings(rawDate, rawPage, rawPageSize) {
   const page = Math.max(1, Math.floor(Number(rawPage)) || 1);
 
   const out = await listCctvFilesIn(date);
-  out.sort((a, b) => a.name.localeCompare(b.name));
+  out.sort((a, b) => b.name.localeCompare(a.name));
 
   const total = out.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
