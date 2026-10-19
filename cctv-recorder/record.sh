@@ -15,6 +15,21 @@ mkdir -p "$(dirname "$LOG")"
 
 log() { echo "[rec] $(date +%FT%T%z) $*" >> "$LOG"; }
 
+# Jangan pernah menulis ke $REC_DIR kalau itu bukan disk eksternal yang
+# benar-benar ter-mount (mis. disk CCTV lepas) -- supaya rekaman tidak diam-diam
+# nyasar ke disk sistem. Tunggu sebentar siapa tahu cctv-mount-watchdog baru
+# saja memperbaikinya; kalau tetap tidak ter-mount, keluar supaya systemd
+# mencoba lagi (Restart=always) sampai mount kembali sehat.
+tries=0
+while ! mountpoint -q "$REC_DIR"; do
+  tries=$((tries + 1))
+  if [ "$tries" -ge 15 ]; then
+    log "$REC_DIR belum ter-mount setelah ditunggu, keluar (akan dicoba lagi)"
+    exit 1
+  fi
+  sleep 2
+done
+
 log "mulai rekam -> $REC_DIR"
 
 # -strftime 1 pakai waktu lokal server (ikut timezone sistem, mis. WIB), jadi
