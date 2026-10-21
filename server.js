@@ -49,6 +49,9 @@ const MAX_PREVIEW = 512 * 1024;
 const MAX_LIST = 4000;
 const PAGE_SIZES = [10, 25, 50, 100];
 const CCTV_DIR = resolve(process.env.CCTV_REC_DIR || "/mnt/cctv");
+// API konten sosmed milik scraper-data-gitgit (hanya bisa dijangkau dari host); dibaca read-only.
+const SOCIAL_API_URL = (process.env.SOCIAL_API_URL || "http://172.18.0.1:8791").replace(/\/+$/, "");
+const SOCIAL_API_KEY = process.env.SOCIAL_API_KEY || "";
 const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
 const MAX_TERM = 8;
@@ -638,6 +641,27 @@ async function readCatalogLog(lines, rawPage, rawPageSize) {
   }
 }
 
+async function fetchSocial(endpoint, params) {
+  if (!SOCIAL_API_KEY) throw httpError(503, "SOCIAL_API_KEY belum di-set di .env dashboard");
+  const qs = new URLSearchParams();
+  for (const key of ["account", "status", "date", "page", "pageSize"]) {
+    const v = params.get(key);
+    if (v) qs.set(key, v);
+  }
+  let res;
+  try {
+    res = await fetch(`${SOCIAL_API_URL}${endpoint}${qs.size ? `?${qs}` : ""}`, {
+      headers: { "X-API-Key": SOCIAL_API_KEY },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    throw httpError(502, "API sosmed tidak bisa dihubungi (service scraper-social-api mati?)");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw httpError(res.status, data.error || `API sosmed error ${res.status}`);
+  return data;
+}
+
 function cctvRecordingFromFile(dateDir, name, st) {
   const hourMatch = /^(\d{2})-\d{2}-\d{2}\.mp4$/.exec(name);
   return {
@@ -838,6 +862,16 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...(await readCatalogLog(Number(url.searchParams.get("lines")), url.searchParams.get("page"), url.searchParams.get("pageSize"))) });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if ((path === `${base}/api/sosmed/overview` || path === `${base}/api/sosmed/posts`) && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await fetchSocial(path.endsWith("/overview") ? "/overview" : "/posts", url.searchParams)) });
+    } catch (err) {
+      sendJson(res, err.status || 502, { ok: false, message: err.message });
     }
     return;
   }

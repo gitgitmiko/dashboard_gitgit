@@ -16,3 +16,4 @@ Setelah masuk:
 - **Ringkasan** — CPU, memori, penyimpanan, dan jaringan
 - **Folder** — daftar isi disk server, pratinjau, dan unduh
 - **Terminal** — shell login di browser. Sesi dan riwayat tetap hidup saat refresh atau browser ditutup; hanya tombol **Tutup** yang mematikan shell.
+- **Sosmed** — status posting otomatis Instagram/Facebook dari `scraper-data-gitgit` (jadwal hari ini, riwayat, link postingan, error). Data dibaca dari API `scraper-social-api`; isi `SOCIAL_API_KEY` (dan opsional `SOCIAL_API_URL`, default `http://172.18.0.1:8791`) di `.env`.

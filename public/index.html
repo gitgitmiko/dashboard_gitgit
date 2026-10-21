@@ -49,7 +49,7 @@
       font: inherit;
     }
     select { padding: 8px 10px; }
-    #cctv-pagination button:disabled, #log-runs-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #cctv-pagination button:disabled, #log-runs-pagination button:disabled, #sm-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
     button {
       border: 0;
       border-radius: 10px;
@@ -138,6 +138,15 @@
     .badge.nochange, .badge.skipped { color: var(--muted); }
     .badge.running, .badge.partial { color: var(--warn); border-color: var(--warn); }
     .badge.failed { color: var(--hot); border-color: var(--hot); }
+    .badge.posted { color: var(--accent); border-color: var(--accent); }
+    .badge.prepared, .badge.waiting { color: var(--warn); border-color: var(--warn); }
+    .sm-thumb { width: 54px; height: 68px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; background: #121812; }
+    .sm-title { max-width: 420px; }
+    .sm-title a { color: var(--text); }
+    .sm-err { color: var(--hot); font-size: 0.8rem; margin-top: 4px; word-break: break-word; }
+    .sm-acct { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+    a.sm-link { color: var(--accent); white-space: nowrap; }
+    .sm-show-m { display: none; }
     .run-events { color: var(--muted); font-size: 0.82rem; margin-top: 4px; }
     #log-raw .l-watch { color: var(--accent); }
     #log-raw .l-err { color: var(--hot); }
@@ -171,6 +180,10 @@
       th, td { padding: 8px 4px; font-size: 0.85rem; }
       .term-body { height: 60vh; padding: 4px; }
       #term-container .term-header { padding: 6px 8px; }
+      .sm-hide-m { display: none; }
+      .sm-show-m { display: block; margin-top: 4px; }
+      .sm-thumb { width: 40px; height: 50px; }
+      .sm-title { min-width: 140px; }
     }
     @media (max-width: 380px) {
       .grid { grid-template-columns: 1fr; }
@@ -204,6 +217,7 @@
         <button class="ghost" type="button" data-tab="terminal">Terminal</button>
         <button class="ghost" type="button" data-tab="logs">Log</button>
         <button class="ghost" type="button" data-tab="cctv">CCTV</button>
+        <button class="ghost" type="button" data-tab="sosmed">Sosmed</button>
       </nav>
 
       <div id="tab-overview">
@@ -317,6 +331,53 @@
         </section>
       </div>
 
+      <div id="tab-sosmed" class="hidden">
+        <div class="grid">
+          <article class="card metric"><span>Terposting hari ini</span><strong id="sm-today">—</strong><p class="muted" id="sm-today-detail"></p></article>
+          <article class="card metric"><span>Gagal (7 hari)</span><strong id="sm-week-failed">—</strong><p class="muted" id="sm-week-detail"></p></article>
+          <article class="card metric"><span>Posting berikutnya</span><strong id="sm-next">—</strong><p class="muted" id="sm-next-detail"></p></article>
+          <article class="card metric"><span>Posting terakhir</span><strong id="sm-last">—</strong><p class="muted" id="sm-last-detail"></p></article>
+        </div>
+        <section class="card">
+          <h2>Jadwal hari ini</h2>
+          <p id="sm-error" class="error"></p>
+          <div id="sm-accounts">Memuat…</div>
+        </section>
+        <section class="card">
+          <h2>Riwayat posting</h2>
+          <div class="files-toolbar">
+            <select id="sm-filter-account" style="width:auto"><option value="">Semua akun</option></select>
+            <select id="sm-filter-status" style="width:auto">
+              <option value="">Semua status</option>
+              <option value="posted">Terposting</option>
+              <option value="failed">Gagal</option>
+              <option value="skipped">Dilewati</option>
+              <option value="prepared">Diproses</option>
+            </select>
+            <input id="sm-filter-date" type="date" style="width:auto" />
+            <button class="ghost small" id="sm-refresh" type="button">Muat ulang</button>
+            <label for="sm-page-size" class="muted" style="font-size:0.88rem;margin-left:auto">Baris:</label>
+            <select id="sm-page-size" style="width:auto">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Waktu</th><th></th><th>Konten</th><th class="sm-hide-m">Akun</th><th class="sm-hide-m">Status</th></tr></thead>
+              <tbody id="sm-rows"><tr><td colspan="5">Memuat…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="files-toolbar" id="sm-pagination" style="margin-top:10px;margin-bottom:0">
+            <button class="ghost small" id="sm-prev" type="button">‹ Sebelumnya</button>
+            <span class="muted" id="sm-page-info" style="font-size:0.88rem"></span>
+            <button class="ghost small" id="sm-next-page" type="button">Berikutnya ›</button>
+          </div>
+        </section>
+      </div>
+
       <div id="tab-cctv" class="hidden">
         <section class="card">
           <div class="files-toolbar">
@@ -421,9 +482,11 @@
       document.querySelector("#tab-terminal").classList.toggle("hidden", name !== "terminal");
       document.querySelector("#tab-logs").classList.toggle("hidden", name !== "logs");
       document.querySelector("#tab-cctv").classList.toggle("hidden", name !== "cctv");
+      document.querySelector("#tab-sosmed").classList.toggle("hidden", name !== "sosmed");
       activeTab = name;
       if (name === "logs") loadLogs();
       if (name === "cctv") loadCctv();
+      if (name === "sosmed") loadSosmed();
       if (name === "files" && !entries.length) loadFiles(currentPath);
       if (name === "terminal") {
         ensureTerminals().then(() => {
@@ -699,6 +762,115 @@
       if (!btn) return;
       const [date, name] = btn.dataset.cctvDl.split("|");
       location.href = cctvFileUrl(date, name, true);
+    });
+
+    const SM_STATUS = { posted: "Terposting", failed: "Gagal", skipped: "Dilewati", prepared: "Diproses", waiting: "Menunggu" };
+    const SM_KIND = { news: "Berita", steam_deals: "Promo Steam", recap_saham: "Rekap saham", recap_crypto: "Rekap crypto" };
+    let smBusy = false;
+    let smPage = 1;
+    let smPageSize = 10;
+    let smTotalPages = 1;
+    function smTime(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return `${d.toLocaleDateString("id-ID", { day: "2-digit", month: "short" })} ${d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`;
+    }
+    function smBadge(status) {
+      const s = status || "waiting";
+      return `<span class="badge ${esc(s)}">${esc(SM_STATUS[s] || s)}</span>`;
+    }
+    function renderSosmedOverview(d) {
+      document.querySelector("#sm-today").textContent = d.today.posted;
+      document.querySelector("#sm-today-detail").textContent = `${d.today.failed} gagal · ${d.today.skipped} dilewati`;
+      document.querySelector("#sm-week-failed").textContent = d.week.failed;
+      document.querySelector("#sm-week-detail").textContent = `${d.week.posted} terposting · ${d.week.skipped} dilewati`;
+      document.querySelector("#sm-next").textContent = d.next ? d.next.at.slice(11, 16) : "—";
+      document.querySelector("#sm-next-detail").textContent = d.next ? `${d.next.account} · ${SM_KIND[d.next.kind] || d.next.kind}` : "Tidak ada lagi hari ini";
+      document.querySelector("#sm-last").innerHTML = d.last ? (d.last.permalink ? `<a class="sm-link" href="${esc(d.last.permalink)}" target="_blank" rel="noopener">${esc(smTime(d.last.updated_at))}</a>` : esc(smTime(d.last.updated_at))) : "—";
+      document.querySelector("#sm-last-detail").textContent = d.last ? `${d.last.account} · ${(d.last.title || "").slice(0, 60)}` : "Belum ada posting";
+
+      const sel = document.querySelector("#sm-filter-account");
+      const current = sel.value;
+      sel.innerHTML = `<option value="">Semua akun</option>` + d.accounts.map((a) => `<option value="${esc(a.key)}">${esc(a.handle || a.key)}</option>`).join("");
+      sel.value = current;
+
+      document.querySelector("#sm-accounts").innerHTML = d.accounts.map((a) => `
+        <div class="sm-acct"><strong>${esc(a.handle || a.key)}</strong>
+          <span class="muted">${esc(a.brand_name)} · kategori ${esc(a.category)}</span>
+          ${!a.enabled ? '<span class="badge skipped">Nonaktif</span>' : !a.connected ? '<span class="badge failed">Belum terhubung</span>' : '<span class="badge posted">Aktif</span>'}
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Jam</th><th>Konten</th>${a.platforms.map((p) => `<th>${esc(p === "instagram" ? "Instagram" : "Facebook")}</th>`).join("")}</tr></thead>
+          <tbody>${a.schedule.map((s) => `<tr>
+            <td>${esc(s.time)}</td><td>${esc(SM_KIND[s.kind] || s.kind)}</td>
+            ${s.platforms.map((p) => `<td>${smBadge(p.status || (s.past ? "skipped" : "waiting"))}
+              ${p.permalink ? ` <a class="sm-link" href="${esc(p.permalink)}" target="_blank" rel="noopener">Lihat ↗</a>` : ""}
+              ${p.error ? `<div class="sm-err">${esc(p.error)}</div>` : ""}</td>`).join("")}
+          </tr>`).join("")}</tbody>
+        </table></div>`).join("<br>") || "Belum ada akun.";
+    }
+    function renderSosmedPosts(d) {
+      smPage = d.page || 1;
+      smTotalPages = d.totalPages || 1;
+      document.querySelector("#sm-rows").innerHTML = (d.posts || []).map((p) => `
+        <tr>
+          <td style="white-space:nowrap">${esc(smTime(p.updated_at || p.created_at))}<div class="muted" style="font-size:0.78rem">${esc(p.slot.replace(/-(news|steam_deals|recap_saham|recap_crypto)$/, ""))}</div></td>
+          <td>${p.image_url ? `<a href="${esc(p.image_url)}" target="_blank" rel="noopener"><img class="sm-thumb" loading="lazy" src="${esc(p.image_url)}" alt="" onerror="this.style.visibility='hidden'"></a>` : ""}</td>
+          <td class="sm-title">${p.permalink ? `<a href="${esc(p.permalink)}" target="_blank" rel="noopener">${esc(p.title || "—")}</a>` : esc(p.title || "—")}
+            <div class="muted" style="font-size:0.8rem">${esc(SM_KIND[p.kind] || p.kind)} · ${esc(p.platform)}${p.attempts > 1 ? ` · percobaan ${p.attempts}` : ""}</div>
+            <div class="sm-show-m">${smBadge(p.status)}${p.permalink ? ` <a class="sm-link" href="${esc(p.permalink)}" target="_blank" rel="noopener">Lihat ↗</a>` : ""}</div>
+            ${p.error ? `<div class="sm-err">${esc(p.error)}</div>` : ""}</td>
+          <td class="sm-hide-m">${esc(p.account)}</td>
+          <td class="sm-hide-m">${smBadge(p.status)}${p.permalink ? `<div><a class="sm-link" href="${esc(p.permalink)}" target="_blank" rel="noopener">Lihat ↗</a></div>` : ""}</td>
+        </tr>`).join("") || `<tr><td colspan="5">Belum ada posting.</td></tr>`;
+      document.querySelector("#sm-page-info").textContent = `Hal ${smPage} / ${smTotalPages} · ${d.total} posting`;
+      document.querySelector("#sm-prev").disabled = smPage <= 1;
+      document.querySelector("#sm-next-page").disabled = smPage >= smTotalPages;
+    }
+    async function loadSosmed() {
+      if (smBusy) return;
+      smBusy = true;
+      const err = document.querySelector("#sm-error");
+      const qs = new URLSearchParams({ page: String(smPage), pageSize: String(smPageSize) });
+      for (const [key, sel] of [["account", "#sm-filter-account"], ["status", "#sm-filter-status"], ["date", "#sm-filter-date"]]) {
+        const v = document.querySelector(sel).value;
+        if (v) qs.set(key, v);
+      }
+      try {
+        const [ov, posts] = await Promise.all([
+          fetch(`${base}/api/sosmed/overview`, { cache: "no-store" }),
+          fetch(`${base}/api/sosmed/posts?${qs}`, { cache: "no-store" }),
+        ]);
+        if (ov.status === 401 || posts.status === 401) { show(false); return; }
+        const od = await ov.json();
+        const pd = await posts.json();
+        if (!ov.ok || !posts.ok) { err.textContent = od.message || pd.message || "Gagal memuat data sosmed"; return; }
+        err.textContent = "";
+        renderSosmedOverview(od);
+        renderSosmedPosts(pd);
+      } catch {
+        err.textContent = "Gagal memuat data sosmed";
+      } finally {
+        smBusy = false;
+      }
+    }
+    setInterval(() => {
+      if (activeTab === "sosmed" && !document.hidden) loadSosmed();
+    }, 30000);
+    document.querySelector("#sm-refresh").addEventListener("click", loadSosmed);
+    for (const sel of ["#sm-filter-account", "#sm-filter-status", "#sm-filter-date"]) {
+      document.querySelector(sel).addEventListener("change", () => { smPage = 1; loadSosmed(); });
+    }
+    document.querySelector("#sm-page-size").addEventListener("change", (event) => {
+      smPageSize = Number(event.target.value) || 10;
+      smPage = 1;
+      loadSosmed();
+    });
+    document.querySelector("#sm-prev").addEventListener("click", () => {
+      if (smPage > 1) { smPage -= 1; loadSosmed(); }
+    });
+    document.querySelector("#sm-next-page").addEventListener("click", () => {
+      if (smPage < smTotalPages) { smPage += 1; loadSosmed(); }
     });
 
     function begin() {
