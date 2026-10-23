@@ -699,11 +699,11 @@
       cctvTotalPages = data.totalPages || 1;
       const total = data.total ?? rows.length;
       if (data.date) document.querySelector("#cctv-date").value = data.date;
-      caption.textContent = `Rekaman tanggal ${data.date} (${total} jam)`;
+      caption.textContent = `Rekaman tanggal ${data.date} (${total} berkas)`;
       document.querySelector("#cctv-rows").innerHTML = rows.map((r) => `
         <tr>
           <td>${esc(r.date)}</td>
-          <td>${esc(r.hour || "—")}:00</td>
+          <td>${esc(r.time || (r.hour ? `${r.hour}:00` : "—"))}</td>
           <td>${fmtBytes(r.size)}</td>
           <td>${r.mtime ? new Date(r.mtime).toLocaleString("id-ID") : "—"}</td>
           <td><button class="ghost small" type="button" data-cctv-dl="${esc(r.date)}|${esc(r.name)}">Unduh</button></td>

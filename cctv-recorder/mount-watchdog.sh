@@ -35,7 +35,11 @@ if [ -z "$device" ]; then
   exit 0
 fi
 
-mounted_source="$(findmnt -no SOURCE --target "$REC_DIR" 2>/dev/null || true)"
+# Pakai --mountpoint (bukan --target): kalau /mnt/cctv tidak ter-mount, --target
+# malah mengembalikan disk sistem. Kalau ada beberapa mount bertumpuk di
+# /mnt/cctv (sisa device lama yang mati), yang aktif/terlihat adalah lapisan
+# paling atas = baris terakhir.
+mounted_source="$(findmnt -no SOURCE --mountpoint "$REC_DIR" 2>/dev/null | tail -n1 || true)"
 healthy=0
 if [ -n "$mounted_source" ] && [ "$mounted_source" = "$device" ]; then
   if timeout 5 stat "$REC_DIR" >/dev/null 2>&1; then
@@ -49,9 +53,15 @@ if [ "$healthy" = "1" ]; then
 fi
 
 log "perlu mount ulang (device=$device, mounted_source=${mounted_source:-tidak ada}, sehat=$healthy) -> memperbaiki"
-umount -l "$REC_DIR" 2>>"$LOG"
+# Lepas SEMUA lapisan mount di /mnt/cctv, bukan cuma yang paling atas. Kalau
+# cuma satu yang dilepas, mount lama yang mati tetap tertinggal di bawah dan
+# menumpuk tiap kali diperbaiki.
+for _ in $(seq 1 10); do
+  findmnt -n --mountpoint "$REC_DIR" >/dev/null 2>&1 || break
+  umount -l "$REC_DIR" 2>>"$LOG" || break
+done
 if mount "$REC_DIR" 2>>"$LOG"; then
-  log "mount ulang berhasil -> $(findmnt -no SOURCE --target "$REC_DIR" 2>/dev/null)"
+  log "mount ulang berhasil -> $(findmnt -no SOURCE --mountpoint "$REC_DIR" 2>/dev/null | paste -sd, -)"
   echo "fixed:$device" > "$STATE"
   systemctl --user restart cctv-recorder.service
   log "cctv-recorder.service disambungkan ulang"

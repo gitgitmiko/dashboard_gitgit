@@ -663,13 +663,14 @@ async function fetchSocial(endpoint, params) {
 }
 
 function cctvRecordingFromFile(dateDir, name, st) {
-  const hourMatch = /^(\d{2})-\d{2}-\d{2}\.mp4$/.exec(name);
+  const m = /^(\d{2})-(\d{2})-(\d{2})\.mp4$/.exec(name);
   return {
     date: dateDir,
     name,
-    hour: hourMatch ? hourMatch[1] : null,
+    hour: m ? m[1] : null,
+    time: m ? `${m[1]}:${m[2]}` : null,
     // Nama folder/berkas memakai waktu lokal server (WIB), bukan UTC, jadi tidak diberi akhiran "Z".
-    started_at: `${dateDir}T${hourMatch ? hourMatch[1] : "00"}:00:00`,
+    started_at: `${dateDir}T${m ? `${m[1]}:${m[2]}:${m[3]}` : "00:00:00"}`,
     size: st.size,
     mtime: st.mtime.toISOString(),
   };
@@ -763,7 +764,9 @@ async function sendCctvFile(req, res, rawDate, rawName, download) {
     throw httpError(err.code === "ENOENT" ? 404 : err.code === "EACCES" ? 403 : 400, err.code === "ENOENT" ? "Rekaman tidak ditemukan" : "Tidak bisa dibuka");
   }
   if (!st.isFile()) throw httpError(400, "Bukan berkas rekaman");
-  const name = safeDownloadName(target);
+  // Nama berkas di disk cuma jam (05-00-00.mp4); saat diunduh beri tanggal
+  // lengkap supaya tidak bentrok/membingungkan, mis. cctv_2026-10-24_05-00-00.mp4.
+  const name = safeDownloadName(`cctv_${basename(dirname(target))}_${basename(target)}`);
   res.writeHead(200, {
     "Content-Type": "video/mp4",
     "Content-Length": st.size,
