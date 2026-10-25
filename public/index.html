@@ -222,7 +222,7 @@
 
       <div id="tab-overview">
         <div class="grid">
-          <article class="card metric"><span>CPU</span><strong id="cpu">—</strong><div class="bar" id="cpu-bar"><i></i></div></article>
+          <article class="card metric"><span>CPU</span><strong id="cpu">—</strong><div class="bar" id="cpu-bar"><i></i></div><p class="muted" id="cpu-detail"></p></article>
           <article class="card metric"><span>RAM</span><strong id="ram">—</strong><div class="bar" id="ram-bar"><i></i></div><p class="muted" id="ram-detail"></p></article>
           <article class="card metric"><span>Swap</span><strong id="swap">—</strong><p class="muted" id="swap-detail"></p></article>
           <article class="card metric"><span>Load</span><strong id="load">—</strong><p class="muted" id="uptime"></p></article>
@@ -557,6 +557,7 @@
       document.querySelector("#meta").textContent = new Date(data.time).toLocaleString("id-ID");
       document.querySelector("#cpu").textContent = `${data.cpu.percent.toFixed(1)}%`;
       setBar("#cpu-bar", data.cpu.percent);
+      document.querySelector("#cpu-detail").textContent = `${data.cpu.model} (${data.cpu.cores} cores)`;
       document.querySelector("#ram").textContent = `${data.memory.percent.toFixed(1)}%`;
       document.querySelector("#ram-detail").textContent = `${fmtBytes(data.memory.used)} / ${fmtBytes(data.memory.total)}`;
       setBar("#ram-bar", data.memory.percent);

@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { lstat, open, readFile, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { homedir as osHomedir, hostname as osHostname, loadavg, uptime } from "node:os";
+import { homedir as osHomedir, hostname as osHostname, loadavg, uptime, cpus } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile, spawn } from "node:child_process";
@@ -193,13 +193,18 @@ async function collectStats() {
   const swapTotal = mem.SwapTotal || 0;
   const swapFree = mem.SwapFree || 0;
   const [one, five, fifteen] = loadavg();
+  const cpuList = cpus();
   return {
     hostname: osHostname(),
     time: new Date().toISOString(),
     uptime_sec: uptime(),
     home: HOME,
     load: { one, five, fifteen },
-    cpu: { percent: cpuPercent() },
+    cpu: {
+      percent: cpuPercent(),
+      model: cpuList[0]?.model?.trim() || "CPU",
+      cores: cpuList.length,
+    },
     memory: {
       total,
       used,
