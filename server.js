@@ -7,6 +7,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 
 const execFileAsync = promisify(execFile);
@@ -641,6 +642,61 @@ async function readCatalogLog(lines, rawPage, rawPageSize) {
   }
 }
 
+const ROUTER_DB = join(osHomedir(), ".9router", "db", "data.sqlite");
+const ROUTER_FREE_COMBO = process.env.ROUTER_FREE_COMBO || "gemini-free";
+
+function readFreeUsage() {
+  const db = new DatabaseSync(ROUTER_DB, { readOnly: true });
+  try {
+    const combo = db.prepare("SELECT models FROM combos WHERE name = ?").get(ROUTER_FREE_COMBO);
+    if (!combo) throw httpError(404, `Combo "${ROUTER_FREE_COMBO}" tidak ditemukan di 9router`);
+    const pool = [...new Set(JSON.parse(combo.models))].filter((m) => m.includes("/") && m !== ROUTER_FREE_COMBO);
+    const conns = db.prepare("SELECT provider, isActive, data FROM providerConnections").all();
+    const providers = {};
+    for (const c of conns) {
+      const d = JSON.parse(c.data);
+      providers[c.provider] = {
+        active: !!c.isActive,
+        status: d.testStatus || "unknown",
+        rateLimitedUntil: d.rateLimitedUntil || null,
+        lastError: d.lastError ? String(d.lastError).replace(/\s+/g, " ").slice(0, 140) : null,
+        locks: Object.fromEntries(Object.entries(d).filter(([k, v]) => k.startsWith("modelLock_") && v).map(([k, v]) => [k.slice(10), v])),
+      };
+    }
+    const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+    const rows = db.prepare(`SELECT provider, model, COUNT(*) AS total, SUM(promptTokens + completionTokens) AS tokens,
+        SUM(CASE WHEN timestamp >= ? THEN 1 ELSE 0 END) AS today, MAX(timestamp) AS last
+      FROM usageHistory GROUP BY provider, model`).all(dayStart.toISOString());
+    const used = new Map(rows.map((r) => [`${r.provider}/${r.model}`, r]));
+    const now = Date.now();
+    const models = pool.map((full) => {
+      const r = used.get(full);
+      const provider = full.slice(0, full.indexOf("/"));
+      const model = full.slice(provider.length + 1);
+      const info = providers[provider];
+      const lock = info?.locks[model];
+      const limited = (lock && Date.parse(lock) > now) || (info?.rateLimitedUntil && Date.parse(info.rateLimitedUntil) > now);
+      return {
+        model, provider,
+        today: r?.today || 0, total: r?.total || 0, tokens: r?.tokens || 0, last: r?.last || null,
+        state: limited || info?.status === "unavailable" ? "limit" : info && info.active === false ? "off" : "ok",
+        note: limited ? (lock || info.rateLimitedUntil) : info?.status === "unavailable" ? info.lastError : null,
+      };
+    }).sort((a, b) => b.today - a.today || b.total - a.total || a.model.localeCompare(b.model));
+    const usedToday = models.filter((m) => m.today > 0).length;
+    const usedAll = models.filter((m) => m.total > 0).length;
+    return {
+      combo: ROUTER_FREE_COMBO, totalModels: models.length, usedToday, usedAll,
+      percentToday: models.length ? (usedToday / models.length) * 100 : 0,
+      percentAll: models.length ? (usedAll / models.length) * 100 : 0,
+      requestsToday: models.reduce((n, m) => n + m.today, 0),
+      models,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 async function fetchSocial(endpoint, params) {
   if (!SOCIAL_API_KEY) throw httpError(503, "SOCIAL_API_KEY belum di-set di .env dashboard");
   const qs = new URLSearchParams();
@@ -855,6 +911,16 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...(await collectStats()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/free-usage` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...readFreeUsage() });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }

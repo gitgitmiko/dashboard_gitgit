@@ -226,6 +226,7 @@
           <article class="card metric"><span>RAM</span><strong id="ram">—</strong><div class="bar" id="ram-bar"><i></i></div><p class="muted" id="ram-detail"></p></article>
           <article class="card metric"><span>Swap</span><strong id="swap">—</strong><p class="muted" id="swap-detail"></p></article>
           <article class="card metric"><span>Load</span><strong id="load">—</strong><p class="muted" id="uptime"></p></article>
+          <article class="card metric" id="free-models-card" style="cursor: pointer;" title="Klik untuk detail pemakaian model free"><span>Model Free Usage</span><strong id="free-usage-pct">—</strong><div class="bar" id="free-bar"><i></i></div><p class="muted" id="free-usage-detail">Memuat…</p></article>
         </div>
         <section class="card">
           <h2>Penyimpanan</h2>
@@ -408,6 +409,23 @@
           </div>
         </section>
       </div>
+
+      <!-- Modal Detail Model Free -->
+      <div id="free-models-modal" class="hidden" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000;">
+        <div class="card" style="width: min(600px, calc(100% - 32px)); max-height: 80vh; overflow-y: auto; background: var(--card); border: 1px solid var(--line);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h2>Detail Pemakaian Model Free Hermes</h2>
+            <button id="close-free-modal" class="ghost small" type="button">Tutup</button>
+          </div>
+          <p class="muted" id="free-modal-summary" style="margin-bottom: 12px;"></p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Model</th><th>Provider</th><th>Hari ini / Total</th><th>Status</th></tr></thead>
+              <tbody id="free-models-tbody"><tr><td colspan="4">Memuat…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
   <script src="/agen/vendor/xterm.js"></script>
@@ -502,6 +520,33 @@
         });
       }
     }
+
+    async function loadFreeUsage() {
+      try {
+        const res = await fetch(`${base}/api/free-usage`, { cache: "no-store" });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.message);
+        document.querySelector("#free-usage-pct").textContent = `${d.percentToday.toFixed(0)}%`;
+        setBar("#free-bar", d.percentToday);
+        document.querySelector("#free-usage-detail").textContent = `${d.usedToday} / ${d.totalModels} model dipakai hari ini · ${d.requestsToday} request`;
+        document.querySelector("#free-modal-summary").textContent = `Pool "${d.combo}": ${d.usedToday} dari ${d.totalModels} model free dipakai hari ini (${d.percentToday.toFixed(0)}%), ${d.usedAll} pernah dipakai sejak awal (${d.percentAll.toFixed(0)}%).`;
+        const ST = { ok: "Aktif", limit: "Limit", off: "Nonaktif" };
+        document.querySelector("#free-models-tbody").innerHTML = d.models.map((m) => `<tr>
+          <td>${esc(m.model)}</td><td>${esc(m.provider)}</td>
+          <td>${m.today} / ${m.total}${m.tokens ? `<div class="muted" style="font-size:0.78rem">${m.tokens.toLocaleString("id-ID")} token</div>` : ""}</td>
+          <td>${ST[m.state]}${m.note ? `<div class="muted" style="font-size:0.78rem">${esc(String(m.note).slice(0, 80))}</div>` : ""}</td></tr>`).join("");
+      } catch (e) {
+        document.querySelector("#free-usage-pct").textContent = "—";
+        document.querySelector("#free-usage-detail").textContent = "Gagal memuat";
+      }
+    }
+    document.querySelector("#free-models-card").addEventListener("click", () => {
+      document.querySelector("#free-models-modal").classList.remove("hidden");
+      loadFreeUsage();
+    });
+    document.querySelector("#close-free-modal").addEventListener("click", () => document.querySelector("#free-models-modal").classList.add("hidden"));
+    document.querySelector("#free-models-modal").addEventListener("click", (e) => { if (e.target.id === "free-models-modal") e.target.classList.add("hidden"); });
+    setInterval(() => { if (activeTab === "overview" && !document.hidden) loadFreeUsage(); }, 30000);
 
     async function paint() {
       const res = await fetch(`${base}/api/stats`, { cache: "no-store" });
@@ -785,7 +830,7 @@
       document.querySelector("#sm-week-failed").textContent = d.week.failed;
       document.querySelector("#sm-week-detail").textContent = `${d.week.posted} terposting · ${d.week.skipped} dilewati`;
       document.querySelector("#sm-next").textContent = d.next ? d.next.at.slice(11, 16) : "—";
-      document.querySelector("#sm-next-detail").textContent = d.next ? `${d.next.account} · ${SM_KIND[d.next.kind] || d.next.kind}` : "Tidak ada lagi hari ini";
+      document.querySelector("#sm-next-detail").textContent = d.next ? `${d.next.account} · ${d.next.label || SM_KIND[d.next.kind] || d.next.kind}` : "Tidak ada lagi hari ini";
       document.querySelector("#sm-last").innerHTML = d.last ? (d.last.permalink ? `<a class="sm-link" href="${esc(d.last.permalink)}" target="_blank" rel="noopener">${esc(smTime(d.last.updated_at))}</a>` : esc(smTime(d.last.updated_at))) : "—";
       document.querySelector("#sm-last-detail").textContent = d.last ? `${d.last.account} · ${(d.last.title || "").slice(0, 60)}` : "Belum ada posting";
 
@@ -802,7 +847,7 @@
         <div class="table-wrap"><table>
           <thead><tr><th>Jam</th><th>Konten</th>${a.platforms.map((p) => `<th>${esc(p === "instagram" ? "Instagram" : "Facebook")}</th>`).join("")}</tr></thead>
           <tbody>${a.schedule.map((s) => `<tr>
-            <td>${esc(s.time)}</td><td>${esc(SM_KIND[s.kind] || s.kind)}</td>
+            <td>${esc(s.time)}</td><td>${esc(s.label || SM_KIND[s.kind] || s.kind)}</td>
             ${s.platforms.map((p) => `<td>${smBadge(p.status || (s.past ? "skipped" : "waiting"))}
               ${p.permalink ? ` <a class="sm-link" href="${esc(p.permalink)}" target="_blank" rel="noopener">Lihat ↗</a>` : ""}
               ${p.error ? `<div class="sm-err">${esc(p.error)}</div>` : ""}</td>`).join("")}
@@ -814,10 +859,10 @@
       smTotalPages = d.totalPages || 1;
       document.querySelector("#sm-rows").innerHTML = (d.posts || []).map((p) => `
         <tr>
-          <td style="white-space:nowrap">${esc(smTime(p.updated_at || p.created_at))}<div class="muted" style="font-size:0.78rem">${esc(p.slot.replace(/-(news|steam_deals|recap_saham|recap_crypto)$/, ""))}</div></td>
+          <td style="white-space:nowrap">${esc(smTime(p.updated_at || p.created_at))}<div class="muted" style="font-size:0.78rem">${esc(p.slot.replace(/-(news|steam_deals|recap_saham|recap_crypto)(-[a-z0-9]+)?$/, ""))}</div></td>
           <td>${p.image_url ? `<a href="${esc(p.image_url)}" target="_blank" rel="noopener"><img class="sm-thumb" loading="lazy" src="${esc(p.image_url)}" alt="" onerror="this.style.visibility='hidden'"></a>` : ""}</td>
           <td class="sm-title">${p.permalink ? `<a href="${esc(p.permalink)}" target="_blank" rel="noopener">${esc(p.title || "—")}</a>` : esc(p.title || "—")}
-            <div class="muted" style="font-size:0.8rem">${esc(SM_KIND[p.kind] || p.kind)} · ${esc(p.platform)}${p.attempts > 1 ? ` · percobaan ${p.attempts}` : ""}</div>
+            <div class="muted" style="font-size:0.8rem">${esc(p.label || SM_KIND[p.kind] || p.kind)} · ${esc(p.platform)}${p.attempts > 1 ? ` · percobaan ${p.attempts}` : ""}</div>
             <div class="sm-show-m">${smBadge(p.status)}${p.permalink ? ` <a class="sm-link" href="${esc(p.permalink)}" target="_blank" rel="noopener">Lihat ↗</a>` : ""}</div>
             ${p.error ? `<div class="sm-err">${esc(p.error)}</div>` : ""}</td>
           <td class="sm-hide-m">${esc(p.account)}</td>
@@ -876,6 +921,7 @@
     function begin() {
       show(true);
       paint();
+      loadFreeUsage();
       if (!timer) timer = setInterval(paint, 3000);
       restoreTerminals();
     }
