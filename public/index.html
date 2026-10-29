@@ -49,7 +49,7 @@
       font: inherit;
     }
     select { padding: 8px 10px; }
-    #cctv-pagination button:disabled, #log-runs-pagination button:disabled, #sm-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #cctv-pagination button:disabled, #log-runs-pagination button:disabled, #sm-pagination button:disabled, #yt-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
     button {
       border: 0;
       border-radius: 10px;
@@ -146,6 +146,10 @@
     .sm-err { color: var(--hot); font-size: 0.8rem; margin-top: 4px; word-break: break-word; }
     .sm-acct { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
     a.sm-link { color: var(--accent); white-space: nowrap; }
+    .yt-thumb { width: 54px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; background: #121812; }
+    .yt-busy { border: 1px solid var(--warn); color: var(--warn); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
+    #yt-log .l-err { color: var(--hot); }
+    #yt-log .l-ok { color: var(--accent); }
     .sm-show-m { display: none; }
     .run-events { color: var(--muted); font-size: 0.82rem; margin-top: 4px; }
     #log-raw .l-watch { color: var(--accent); }
@@ -218,6 +222,7 @@
         <button class="ghost" type="button" data-tab="logs">Log</button>
         <button class="ghost" type="button" data-tab="cctv">CCTV</button>
         <button class="ghost" type="button" data-tab="sosmed">Sosmed</button>
+        <button class="ghost" type="button" data-tab="youtube">YouTube</button>
       </nav>
 
       <div id="tab-overview">
@@ -379,6 +384,67 @@
         </section>
       </div>
 
+      <div id="tab-youtube" class="hidden">
+        <div class="grid">
+          <article class="card metric"><span>Terupload hari ini</span><strong id="yt-today">—</strong><p class="muted" id="yt-today-detail"></p></article>
+          <article class="card metric"><span>Gagal (7 hari)</span><strong id="yt-week-failed">—</strong><p class="muted" id="yt-week-detail"></p></article>
+          <article class="card metric"><span>Video berikutnya</span><strong id="yt-next">—</strong><p class="muted" id="yt-next-detail"></p></article>
+          <article class="card metric"><span>Video terakhir</span><strong id="yt-last">—</strong><p class="muted" id="yt-last-detail"></p></article>
+        </div>
+        <section class="card">
+          <h2>Jadwal hari ini · KUISABON</h2>
+          <p id="yt-error" class="error"></p>
+          <div id="yt-busy" class="yt-busy hidden"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Jam</th><th>Topik</th><th>Status</th><th class="sm-hide-m">Video</th></tr></thead>
+              <tbody id="yt-schedule"><tr><td colspan="4">Memuat…</td></tr></tbody>
+            </table>
+          </div>
+          <p class="muted" id="yt-rotation" style="font-size:0.85rem;margin-top:10px"></p>
+        </section>
+        <section class="card">
+          <h2>Riwayat video</h2>
+          <div class="files-toolbar">
+            <select id="yt-filter-topic" style="width:auto"><option value="">Semua topik</option></select>
+            <select id="yt-filter-status" style="width:auto">
+              <option value="">Semua status</option>
+              <option value="uploaded">Terupload</option>
+              <option value="failed">Gagal</option>
+              <option value="rendered">Belum diupload</option>
+              <option value="running">Diproses</option>
+            </select>
+            <input id="yt-filter-date" type="date" style="width:auto" />
+            <button class="ghost small" id="yt-refresh" type="button">Muat ulang</button>
+            <label for="yt-page-size" class="muted" style="font-size:0.88rem;margin-left:auto">Baris:</label>
+            <select id="yt-page-size" style="width:auto">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Waktu</th><th></th><th>Soal</th><th class="sm-hide-m">Topik</th><th class="sm-hide-m">Status</th></tr></thead>
+              <tbody id="yt-rows"><tr><td colspan="5">Memuat…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="files-toolbar" id="yt-pagination" style="margin-top:10px;margin-bottom:0">
+            <button class="ghost small" id="yt-prev" type="button">‹ Sebelumnya</button>
+            <span class="muted" id="yt-page-info" style="font-size:0.88rem"></span>
+            <button class="ghost small" id="yt-next-page" type="button">Berikutnya ›</button>
+          </div>
+        </section>
+        <section class="card">
+          <div class="files-toolbar">
+            <h2 style="margin:0">Log service</h2>
+            <button class="ghost small" id="yt-log-refresh" type="button" style="margin-left:auto">Muat ulang</button>
+          </div>
+          <pre class="preview" id="yt-log" style="max-height:50vh">Memuat…</pre>
+        </section>
+      </div>
+
       <div id="tab-cctv" class="hidden">
         <section class="card">
           <div class="files-toolbar">
@@ -501,10 +567,12 @@
       document.querySelector("#tab-logs").classList.toggle("hidden", name !== "logs");
       document.querySelector("#tab-cctv").classList.toggle("hidden", name !== "cctv");
       document.querySelector("#tab-sosmed").classList.toggle("hidden", name !== "sosmed");
+      document.querySelector("#tab-youtube").classList.toggle("hidden", name !== "youtube");
       activeTab = name;
       if (name === "logs") loadLogs();
       if (name === "cctv") loadCctv();
       if (name === "sosmed") loadSosmed();
+      if (name === "youtube") loadYoutube();
       if (name === "files" && !entries.length) loadFiles(currentPath);
       if (name === "terminal") {
         ensureTerminals().then(() => {
@@ -917,6 +985,135 @@
     });
     document.querySelector("#sm-next-page").addEventListener("click", () => {
       if (smPage < smTotalPages) { smPage += 1; loadSosmed(); }
+    });
+
+    const YT_STATUS = { uploaded: "Terupload", rendered: "Belum diupload", running: "Diproses", failed: "Gagal", missed: "Terlewat", waiting: "Menunggu" };
+    const YT_BADGE = { uploaded: "posted", rendered: "prepared", running: "running", failed: "failed", missed: "failed", waiting: "waiting" };
+    let ytBusy = false;
+    let ytPage = 1;
+    let ytPageSize = 10;
+    let ytTotalPages = 1;
+    function ytBadge(status) {
+      return `<span class="badge ${YT_BADGE[status] || "skipped"}">${esc(YT_STATUS[status] || status)}</span>`;
+    }
+    function ytModel(m) {
+      return m ? m.replace(/^claude:/, "Claude ").replace(/^openrouter\//, "").replace(/:free$/, "") : "—";
+    }
+    function ytDuration(s) {
+      return s ? `${Math.floor(s / 60)}m ${s % 60}d` : "";
+    }
+    function ytLink(q, label = "Tonton ↗") {
+      return q && q.youtube_url ? `<a class="sm-link" href="${esc(q.youtube_url)}" target="_blank" rel="noopener">${label}</a>` : "";
+    }
+    function renderYoutubeOverview(d) {
+      document.querySelector("#yt-today").textContent = `${d.today.uploaded}/${d.today.planned}`;
+      document.querySelector("#yt-today-detail").textContent = `${d.today.failed} gagal hari ini`;
+      document.querySelector("#yt-week-failed").textContent = d.week.failed;
+      document.querySelector("#yt-week-detail").textContent = `${d.week.uploaded} terupload · 7 hari terakhir`;
+      document.querySelector("#yt-next").textContent = d.next ? d.next.time : "—";
+      document.querySelector("#yt-next-detail").textContent = d.next ? `${new Date(d.next.at).toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "short" })} · ${d.next.topicLabel}` : "—";
+      document.querySelector("#yt-last").innerHTML = d.last ? (d.last.youtube_url ? `<a class="sm-link" href="${esc(d.last.youtube_url)}" target="_blank" rel="noopener">${esc(smTime(d.last.at))}</a>` : esc(smTime(d.last.at))) : "—";
+      document.querySelector("#yt-last-detail").textContent = d.last ? (d.last.title || d.last.question || "").slice(0, 70) : "Belum ada video";
+
+      const busy = document.querySelector("#yt-busy");
+      busy.classList.toggle("hidden", !d.service.busy);
+      busy.textContent = d.service.busy ? `Sedang membuat video: ${d.service.stage || "memproses"}…` : "";
+
+      const sel = document.querySelector("#yt-filter-topic");
+      if (sel.options.length <= 1) {
+        sel.innerHTML += Object.entries(d.topics).map(([k, label]) => `<option value="${esc(k)}">${esc(label)}</option>`).join("");
+      }
+      document.querySelector("#yt-schedule").innerHTML = d.schedule.map((s) => {
+        const r = s.run;
+        return `<tr>
+          <td>${esc(s.time)} <span class="muted">${esc(s.slot)}</span></td>
+          <td>${esc(s.topicLabel)}</td>
+          <td>${ytBadge(s.status)}${r && r.status === "running" && r.stage ? `<div class="muted" style="font-size:0.8rem">${esc(r.stage)}</div>` : ""}
+            <div class="sm-show-m">${ytLink(r && r.quiz)}</div>
+            ${r && r.error ? `<div class="sm-err">${esc(r.error)}</div>` : ""}</td>
+          <td class="sm-hide-m">${r && r.quiz ? `${ytLink(r.quiz)}<div class="muted" style="font-size:0.8rem">${esc((r.quiz.title || "").slice(0, 60))}</div>` : "—"}</td>
+        </tr>`;
+      }).join("");
+      document.querySelector("#yt-rotation").textContent = "Rotasi topik: " + d.rotation.map((r) => `${r.day} ${r.topicLabel.toLowerCase()}`).join(" · ") +
+        ` · Penulis soal: ${ytModel(d.llm.writers[0])}, pemeriksa: ${ytModel(d.llm.verifiers[0])}`;
+    }
+    function renderYoutubeHistory(d) {
+      ytPage = d.page || 1;
+      ytTotalPages = d.totalPages || 1;
+      document.querySelector("#yt-rows").innerHTML = (d.runs || []).map((r) => {
+        const q = r.quiz;
+        return `<tr>
+          <td style="white-space:nowrap">${esc(smTime(r.started_at))}<div class="muted" style="font-size:0.78rem">${esc(r.slot)}${r.duration_s ? ` · ${ytDuration(r.duration_s)}` : ""}</div></td>
+          <td>${q && q.thumb ? `<a href="${esc(q.youtube_url)}" target="_blank" rel="noopener"><img class="yt-thumb" loading="lazy" src="${esc(q.thumb)}" alt="" onerror="this.style.visibility='hidden'"></a>` : ""}</td>
+          <td class="sm-title">${q ? (q.youtube_url ? `<a href="${esc(q.youtube_url)}" target="_blank" rel="noopener">${esc(q.question)}</a>` : esc(q.question)) : '<span class="muted">Soal belum dibuat</span>'}
+            ${q ? `<div class="muted" style="font-size:0.8rem">Jawaban: ${esc(q.answer)} · ${esc(ytModel(q.writer))}${q.verifier ? ` → ${esc(ytModel(q.verifier))}` : ""}</div>` : ""}
+            <div class="sm-show-m">${ytBadge(r.status)} ${ytLink(q)}</div>
+            ${r.error ? `<div class="sm-err">${esc(r.error)}</div>` : ""}</td>
+          <td class="sm-hide-m">${esc(r.topicLabel)}</td>
+          <td class="sm-hide-m">${ytBadge(r.status)}${q && q.youtube_url ? `<div>${ytLink(q)}</div>` : ""}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="5">Belum ada video.</td></tr>`;
+      document.querySelector("#yt-page-info").textContent = `Hal ${ytPage} / ${ytTotalPages} · ${d.total} video`;
+      document.querySelector("#yt-prev").disabled = ytPage <= 1;
+      document.querySelector("#yt-next-page").disabled = ytPage >= ytTotalPages;
+    }
+    function renderYoutubeLog(d) {
+      const box = document.querySelector("#yt-log");
+      const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+      box.innerHTML = (d.lines || []).map((line) => {
+        const cls = /failed|error|rejected|gagal/i.test(line) ? "l-err" : /accepted|done in|uploaded/.test(line) ? "l-ok" : "";
+        return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+      }).join("\n") || esc(d.error || "Log kosong.");
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    }
+    async function loadYoutube() {
+      if (ytBusy) return;
+      ytBusy = true;
+      const err = document.querySelector("#yt-error");
+      const qs = new URLSearchParams({ page: String(ytPage), pageSize: String(ytPageSize) });
+      for (const [key, sel] of [["topic", "#yt-filter-topic"], ["status", "#yt-filter-status"], ["date", "#yt-filter-date"]]) {
+        const v = document.querySelector(sel).value;
+        if (v) qs.set(key, v);
+      }
+      try {
+        const [ov, hist, logs] = await Promise.all([
+          fetch(`${base}/api/youtube/overview`, { cache: "no-store" }),
+          fetch(`${base}/api/youtube/history?${qs}`, { cache: "no-store" }),
+          fetch(`${base}/api/youtube/logs?lines=200`, { cache: "no-store" }),
+        ]);
+        if (ov.status === 401 || hist.status === 401) { show(false); return; }
+        const od = await ov.json();
+        const hd = await hist.json();
+        const ld = await logs.json();
+        if (!ov.ok || !hist.ok) { err.textContent = od.message || hd.message || "Gagal memuat data YouTube"; return; }
+        err.textContent = "";
+        renderYoutubeOverview(od);
+        renderYoutubeHistory(hd);
+        renderYoutubeLog(logs.ok ? ld : { error: ld.message });
+      } catch {
+        err.textContent = "Gagal memuat data YouTube";
+      } finally {
+        ytBusy = false;
+      }
+    }
+    setInterval(() => {
+      if (activeTab === "youtube" && !document.hidden) loadYoutube();
+    }, 15000);
+    document.querySelector("#yt-refresh").addEventListener("click", loadYoutube);
+    document.querySelector("#yt-log-refresh").addEventListener("click", loadYoutube);
+    for (const sel of ["#yt-filter-topic", "#yt-filter-status", "#yt-filter-date"]) {
+      document.querySelector(sel).addEventListener("change", () => { ytPage = 1; loadYoutube(); });
+    }
+    document.querySelector("#yt-page-size").addEventListener("change", (event) => {
+      ytPageSize = Number(event.target.value) || 10;
+      ytPage = 1;
+      loadYoutube();
+    });
+    document.querySelector("#yt-prev").addEventListener("click", () => {
+      if (ytPage > 1) { ytPage -= 1; loadYoutube(); }
+    });
+    document.querySelector("#yt-next-page").addEventListener("click", () => {
+      if (ytPage < ytTotalPages) { ytPage += 1; loadYoutube(); }
     });
 
     function begin() {
