@@ -108,6 +108,15 @@
     .crumb span { color: var(--muted); }
     .files-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; }
     .file-row { cursor: pointer; }
+    .file-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+    .file-actions .sel-info { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+    .file-actions button.danger { color: var(--hot); border-color: var(--hot); }
+    .upload-status { color: var(--muted); font-size: 0.85rem; margin-bottom: 8px; }
+    .upload-status progress { width: 100%; height: 8px; display: block; margin-top: 4px; }
+    #files-drop.dragging { outline: 2px dashed var(--accent, #4c8bf5); outline-offset: -4px; }
+    .file-row.cut td { opacity: 0.5; }
+    .check-cell { width: 32px; text-align: center; }
+    .check-cell input { width: 18px; height: 18px; margin: 0; cursor: pointer; }
     .file-row:hover td { background: #222c1e; }
     .file-row.active td { background: #2a3822; }
     .name-cell { display: flex; gap: 8px; align-items: center; word-break: break-all; }
@@ -147,6 +156,7 @@
     .sm-acct { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
     a.sm-link { color: var(--accent); white-space: nowrap; }
     .yt-thumb { width: 54px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; background: #121812; }
+    .wi-thumb { width: 112px; height: 63px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; background: #121812; }
     .yt-busy { border: 1px solid var(--warn); color: var(--warn); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
     #yt-log .l-err { color: var(--hot); }
     #yt-log .l-ok { color: var(--accent); }
@@ -223,6 +233,7 @@
         <button class="ghost" type="button" data-tab="cctv">CCTV</button>
         <button class="ghost" type="button" data-tab="sosmed">Sosmed</button>
         <button class="ghost" type="button" data-tab="youtube">YouTube</button>
+        <button class="ghost" type="button" data-tab="whatif">What If</button>
       </nav>
 
       <div id="tab-overview">
@@ -265,9 +276,22 @@
           <div class="files-layout">
             <div>
               <input id="file-filter" placeholder="Saring nama…" />
-              <div class="table-wrap" style="max-height: 560px;">
+              <div class="file-actions" id="file-actions">
+                <button class="ghost small" type="button" data-act="mkdir">+ Folder</button>
+                <button class="ghost small" type="button" data-act="newfile">+ Berkas</button>
+                <button class="ghost small" type="button" data-act="upload">Unggah</button>
+                <input type="file" id="upload-input" multiple hidden />
+                <button class="ghost small" type="button" data-act="rename">Ganti nama</button>
+                <button class="ghost small" type="button" data-act="copy">Salin</button>
+                <button class="ghost small" type="button" data-act="cut">Potong</button>
+                <button class="ghost small" type="button" data-act="paste" id="paste-btn">Tempel</button>
+                <button class="ghost small danger" type="button" data-act="delete">Hapus</button>
+                <span class="sel-info" id="sel-info"></span>
+              </div>
+              <div class="upload-status hidden" id="upload-status"></div>
+              <div class="table-wrap" id="files-drop" style="max-height: 560px;">
                 <table>
-                  <thead><tr><th>Nama</th><th>Ukuran</th><th>Diubah</th></tr></thead>
+                  <thead><tr><th class="check-cell"><input type="checkbox" id="check-all" title="Pilih semua" /></th><th>Nama</th><th>Ukuran</th><th>Diubah</th></tr></thead>
                   <tbody id="files"></tbody>
                 </table>
               </div>
@@ -445,6 +469,66 @@
         </section>
       </div>
 
+      <div id="tab-whatif" class="hidden">
+        <div class="grid">
+          <article class="card metric"><span>Terupload hari ini</span><strong id="wi-today">—</strong><p class="muted" id="wi-today-detail"></p></article>
+          <article class="card metric"><span>Gagal (7 hari)</span><strong id="wi-week-failed">—</strong><p class="muted" id="wi-week-detail"></p></article>
+          <article class="card metric"><span>Upload berikutnya</span><strong id="wi-next">—</strong><p class="muted" id="wi-next-detail"></p></article>
+          <article class="card metric"><span>Video terakhir</span><strong id="wi-last">—</strong><p class="muted" id="wi-last-detail"></p></article>
+        </div>
+        <section class="card">
+          <h2>Jadwal hari ini · Apa yang terjadi jika</h2>
+          <p id="wi-error" class="error"></p>
+          <div id="wi-busy" class="yt-busy hidden"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Upload</th><th>Produksi</th><th>Status</th><th class="sm-hide-m">Video</th></tr></thead>
+              <tbody id="wi-schedule"><tr><td colspan="4">Memuat…</td></tr></tbody>
+            </table>
+          </div>
+          <p class="muted" style="font-size:0.85rem;margin-top:10px">Video 5-8 menit · naskah Claude Sonnet, diverifikasi Claude Opus · gambar Google Flow · edit Concat · diupload n8n</p>
+        </section>
+        <section class="card">
+          <h2>Riwayat video</h2>
+          <div class="files-toolbar">
+            <select id="wi-filter-status" style="width:auto">
+              <option value="">Semua status</option>
+              <option value="uploaded">Terupload</option>
+              <option value="failed">Gagal</option>
+              <option value="rendered">Belum diupload</option>
+              <option value="running">Diproses</option>
+            </select>
+            <input id="wi-filter-date" type="date" style="width:auto" />
+            <button class="ghost small" id="wi-refresh" type="button">Muat ulang</button>
+            <label for="wi-page-size" class="muted" style="font-size:0.88rem;margin-left:auto">Baris:</label>
+            <select id="wi-page-size" style="width:auto">
+              <option value="10">10</option>
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Waktu</th><th></th><th>Judul</th><th class="sm-hide-m">Status</th></tr></thead>
+              <tbody id="wi-rows"><tr><td colspan="4">Memuat…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="files-toolbar" style="margin-top:10px;margin-bottom:0">
+            <button class="ghost small" id="wi-prev" type="button">‹ Sebelumnya</button>
+            <span class="muted" id="wi-page-info" style="font-size:0.88rem"></span>
+            <button class="ghost small" id="wi-next-page" type="button">Berikutnya ›</button>
+          </div>
+        </section>
+        <section class="card">
+          <div class="files-toolbar">
+            <h2 style="margin:0">Log service</h2>
+            <button class="ghost small" id="wi-log-refresh" type="button" style="margin-left:auto">Muat ulang</button>
+          </div>
+          <pre class="preview" id="wi-log" style="max-height:50vh">Memuat…</pre>
+        </section>
+      </div>
+
       <div id="tab-cctv" class="hidden">
         <section class="card">
           <div class="files-toolbar">
@@ -506,6 +590,8 @@
     let currentParent = null;
     let entries = [];
     let selectedPath = "";
+    let checked = new Set();
+    let clip = null; // { mode: "copy" | "cut", paths: [...] }
     let timer = 0;
     let pendingCd = "";
     let terminals = {};
@@ -568,11 +654,13 @@
       document.querySelector("#tab-cctv").classList.toggle("hidden", name !== "cctv");
       document.querySelector("#tab-sosmed").classList.toggle("hidden", name !== "sosmed");
       document.querySelector("#tab-youtube").classList.toggle("hidden", name !== "youtube");
+      document.querySelector("#tab-whatif").classList.toggle("hidden", name !== "whatif");
       activeTab = name;
       if (name === "logs") loadLogs();
       if (name === "cctv") loadCctv();
       if (name === "sosmed") loadSosmed();
       if (name === "youtube") loadYoutube();
+      if (name === "whatif") loadWhatif();
       if (name === "files" && !entries.length) loadFiles(currentPath);
       if (name === "terminal") {
         ensureTerminals().then(() => {
@@ -653,12 +741,14 @@
       const q = document.querySelector("#file-filter").value.trim().toLowerCase();
       const rows = entries.filter((e) => !q || e.name.toLowerCase().includes(q));
       document.querySelector("#files").innerHTML = rows.map((e) => `
-        <tr class="file-row ${e.path === selectedPath ? "active" : ""}" data-path="${esc(e.path)}" data-type="${esc(e.type)}">
+        <tr class="file-row ${e.path === selectedPath ? "active" : ""} ${clip && clip.mode === "cut" && clip.paths.includes(e.path) ? "cut" : ""}" data-path="${esc(e.path)}" data-type="${esc(e.type)}">
+          <td class="check-cell"><input type="checkbox" data-check="${esc(e.path)}" ${checked.has(e.path) ? "checked" : ""} /></td>
           <td class="name-cell"><span class="icon">${iconFor(e.type)}</span>${esc(e.name)}</td>
           <td>${e.type === "dir" ? "—" : fmtBytes(e.size)}</td>
           <td>${e.mtime ? new Date(e.mtime).toLocaleString("id-ID") : "—"}</td>
         </tr>
-      `).join("") || `<tr><td colspan="3">Folder kosong</td></tr>`;
+      `).join("") || `<tr><td colspan="4">Folder kosong</td></tr>`;
+      renderFileActions(rows);
     }
 
     async function loadFiles(path) {
@@ -671,13 +761,156 @@
         filesError.textContent = data.message || "Gagal membaca folder";
         return;
       }
+      if (data.path !== currentPath) checked = new Set();
       currentPath = data.path;
       currentParent = data.parent;
       entries = data.entries || [];
+      checked = new Set([...checked].filter((p) => entries.some((e) => e.path === p)));
       document.querySelector("#path-input").value = currentPath;
       renderCrumb(currentPath);
       renderFiles();
       if (data.truncated) filesError.textContent = "Daftar dipotong karena terlalu banyak berkas.";
+    }
+
+    // Yang dikenai aksi: berkas yang dicentang, atau kalau tidak ada, berkas yang sedang dipratinjau di folder ini.
+    function targets() {
+      if (checked.size) return [...checked];
+      return selectedPath && entries.some((e) => e.path === selectedPath) ? [selectedPath] : [];
+    }
+    function renderFileActions(rows = entries) {
+      const n = targets().length;
+      document.querySelector("#sel-info").textContent = [
+        checked.size ? `${checked.size} dipilih` : n ? "1 dipilih (pratinjau)" : "",
+        clip ? `${clip.paths.length} di papan klip (${clip.mode === "cut" ? "potong" : "salin"})` : "",
+      ].filter(Boolean).join(" · ");
+      const paste = document.querySelector("#paste-btn");
+      paste.disabled = !clip;
+      paste.textContent = clip ? `Tempel (${clip.paths.length})` : "Tempel";
+      for (const act of ["rename"]) document.querySelector(`[data-act="${act}"]`).disabled = n !== 1;
+      for (const act of ["copy", "cut", "delete"]) document.querySelector(`[data-act="${act}"]`).disabled = !n;
+      const all = document.querySelector("#check-all");
+      all.checked = rows.length > 0 && rows.every((e) => checked.has(e.path));
+      all.indeterminate = !all.checked && rows.some((e) => checked.has(e.path));
+    }
+    async function fsOp(body) {
+      const errBox = document.querySelector("#files-error");
+      errBox.textContent = "";
+      const res = await fetch(`${base}/api/fs/op`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) { show(false); return null; }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errBox.textContent = data.message || "Gagal";
+        return null;
+      }
+      return data;
+    }
+
+    // Satu berkas per request (badan mentah), pakai XHR supaya ada progres.
+    function uploadOne(file, dir, overwrite, onProgress) {
+      return new Promise((done) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${base}/api/fs/upload?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.name)}${overwrite ? "&overwrite=1" : ""}`);
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded); };
+        xhr.onload = () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText); } catch {}
+          done({ status: xhr.status, data });
+        };
+        xhr.onerror = () => done({ status: 0, data: { message: "Koneksi terputus" } });
+        xhr.send(file);
+      });
+    }
+    let uploading = false;
+    async function uploadFiles(files) {
+      files = [...files].filter((f) => f.name);
+      if (!files.length || uploading) return;
+      uploading = true;
+      const dir = currentPath;
+      const box = document.querySelector("#upload-status");
+      const errBox = document.querySelector("#files-error");
+      errBox.textContent = "";
+      const total = files.reduce((n, f) => n + f.size, 0) || 1;
+      let sent = 0;
+      const errors = [];
+      box.classList.remove("hidden");
+      try {
+        for (const [i, file] of files.entries()) {
+          const paint = (loaded) => {
+            box.innerHTML = `Mengunggah ${i + 1}/${files.length}: ${esc(file.name)} (${fmtBytes(loaded)} / ${fmtBytes(file.size)})<progress max="${total}" value="${sent + loaded}"></progress>`;
+          };
+          paint(0);
+          let r = await uploadOne(file, dir, false, paint);
+          let skipped = false;
+          if (r.status === 409) {
+            if (confirm(`"${file.name}" sudah ada di ${dir}. Timpa?`)) r = await uploadOne(file, dir, true, paint);
+            else skipped = true;
+          }
+          if (r.status === 401) { show(false); return; }
+          if (r.status !== 200 && !skipped) errors.push(`${file.name}: ${r.data.message || "Gagal"}`);
+          sent += file.size;
+        }
+      } finally {
+        uploading = false;
+        box.classList.add("hidden");
+        box.innerHTML = "";
+        if (errors.length) errBox.textContent = `Gagal mengunggah: ${errors.join("; ")}`;
+        if (currentPath === dir) await loadFiles(dir);
+      }
+    }
+    async function fileAction(act) {
+      const sel = targets();
+      const nameOf = (p) => p.split("/").pop();
+      if (act === "upload") {
+        document.querySelector("#upload-input").click();
+      } else if (act === "mkdir" || act === "newfile") {
+        const name = prompt(act === "mkdir" ? "Nama folder baru:" : "Nama berkas baru:");
+        if (!name) return;
+        const r = await fsOp({ op: act, dir: currentPath, name });
+        if (r) { await loadFiles(currentPath); if (act === "newfile") previewFile(r.path, "file"); }
+      } else if (act === "rename") {
+        if (sel.length !== 1) return;
+        const name = prompt("Nama baru:", nameOf(sel[0]));
+        if (!name || name === nameOf(sel[0])) return;
+        const r = await fsOp({ op: "rename", path: sel[0], name });
+        if (r) {
+          checked.delete(sel[0]);
+          if (selectedPath === sel[0]) selectedPath = r.path;
+          await loadFiles(currentPath);
+        }
+      } else if (act === "copy" || act === "cut") {
+        if (!sel.length) return;
+        clip = { mode: act, paths: sel };
+        checked = new Set();
+        renderFiles();
+      } else if (act === "paste") {
+        if (!clip) return;
+        const r = await fsOp({ op: clip.mode === "cut" ? "move" : "copy", paths: clip.paths, dest: currentPath });
+        if (r) {
+          if (clip.mode === "cut") clip = null;
+          await loadFiles(currentPath);
+        }
+      } else if (act === "delete") {
+        if (!sel.length) return;
+        const list = sel.slice(0, 10).map(nameOf).join("\n") + (sel.length > 10 ? `\n… dan ${sel.length - 10} lagi` : "");
+        if (!confirm(`Hapus permanen ${sel.length} item? Tidak bisa dibatalkan.\n\n${list}`)) return;
+        const r = await fsOp({ op: "delete", paths: sel });
+        if (r) {
+          if (sel.includes(selectedPath)) {
+            selectedPath = "";
+            document.querySelector("#preview").textContent = "Pilih folder atau berkas.";
+            document.querySelector("#preview-title").textContent = "Pratinjau";
+          }
+          if (clip) clip.paths = clip.paths.filter((p) => !sel.includes(p));
+          if (clip && !clip.paths.length) clip = null;
+          checked = new Set();
+          await loadFiles(currentPath);
+        }
+      }
     }
 
     async function previewFile(path, type) {
@@ -1116,6 +1349,126 @@
       if (ytPage < ytTotalPages) { ytPage += 1; loadYoutube(); }
     });
 
+    // Tab "What If": video panjang "Apa yang terjadi jika" (service whatif), bentuk data mirip tab YouTube.
+    const WI_SLOT = { siang: "Siang", sore: "Sore" };
+    let wiBusy = false;
+    let wiPage = 1;
+    let wiPageSize = 10;
+    let wiTotalPages = 1;
+    function wiLink(r, label = "Tonton ↗") {
+      return r && r.youtube_url ? `<a class="sm-link" href="${esc(r.youtube_url)}" target="_blank" rel="noopener">${label}</a>` : "";
+    }
+    // Link publik download preview; hilang sendiri setelah video terupload (service whatif berhenti mengirim "preview").
+    function wiPreviewLink(r) {
+      if (!r || !r.preview) return "";
+      const href = `${location.origin}${base}/preview/whatif/${r.preview}`;
+      return `<div style="font-size:0.8rem"><a class="sm-link" href="${esc(href)}" target="_blank" rel="noopener">Preview ⬇</a>
+        <button class="ghost" type="button" style="padding:0.1rem 0.5rem;font-size:0.75rem" onclick="navigator.clipboard.writeText('${esc(href)}').then(() => { this.textContent = 'Tersalin ✓'; })">Salin link publik</button></div>`;
+    }
+    function wiLength(s) {
+      return s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
+    }
+    function renderWhatifOverview(d) {
+      document.querySelector("#wi-today").textContent = `${d.today.uploaded}/${d.today.planned}`;
+      document.querySelector("#wi-today-detail").textContent = `${d.today.failed} gagal hari ini`;
+      document.querySelector("#wi-week-failed").textContent = d.week.failed;
+      document.querySelector("#wi-week-detail").textContent = `${d.week.uploaded} terupload · 7 hari terakhir`;
+      document.querySelector("#wi-next").textContent = d.next ? d.next.upload : "—";
+      document.querySelector("#wi-next-detail").textContent = d.next ? `${new Date(d.next.at).toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "short" })} · produksi mulai ${d.next.produce}` : "—";
+      document.querySelector("#wi-last").innerHTML = d.last ? (d.last.youtube_url ? `<a class="sm-link" href="${esc(d.last.youtube_url)}" target="_blank" rel="noopener">${esc(smTime(d.last.finished_at))}</a>` : esc(smTime(d.last.finished_at))) : "—";
+      document.querySelector("#wi-last-detail").textContent = d.last ? (d.last.title || "").slice(0, 70) : "Belum ada video";
+
+      const busy = document.querySelector("#wi-busy");
+      busy.classList.toggle("hidden", !d.service.busy);
+      busy.textContent = d.service.busy ? `Sedang membuat video: ${d.service.stage || "memulai"}…` : "";
+
+      document.querySelector("#wi-schedule").innerHTML = d.schedule.map((s) => {
+        const r = s.run;
+        return `<tr>
+          <td>${esc(s.upload)} <span class="muted">${esc(WI_SLOT[s.slot] || s.slot)}</span></td>
+          <td>${esc(s.produce)}</td>
+          <td>${ytBadge(s.status)}${r && r.status === "running" && r.stage ? `<div class="muted" style="font-size:0.8rem">${esc(r.stage)}</div>` : ""}
+            <div class="sm-show-m">${wiLink(r)}${wiPreviewLink(r)}</div>
+            ${r && r.error ? `<div class="sm-err">${esc(r.error)}</div>` : ""}</td>
+          <td class="sm-hide-m">${r ? `${wiLink(r)}<div class="muted" style="font-size:0.8rem">${esc((r.title || r.topic || "").slice(0, 70))}</div>${wiPreviewLink(r)}` : "—"}</td>
+        </tr>`;
+      }).join("");
+    }
+    function renderWhatifHistory(d) {
+      wiPage = d.page || 1;
+      wiTotalPages = d.totalPages || 1;
+      document.querySelector("#wi-rows").innerHTML = (d.runs || []).map((r) => `<tr>
+          <td style="white-space:nowrap">${esc(smTime(r.started_at))}<div class="muted" style="font-size:0.78rem">${esc(WI_SLOT[r.slot] || r.slot)}${r.duration_s ? ` · dibuat ${ytDuration(r.duration_s)}` : ""}</div></td>
+          <td>${r.thumb ? `<a href="${esc(r.youtube_url)}" target="_blank" rel="noopener"><img class="wi-thumb" loading="lazy" src="${esc(r.thumb)}" alt="" onerror="this.style.visibility='hidden'"></a>` : ""}</td>
+          <td class="sm-title">${r.youtube_url ? `<a href="${esc(r.youtube_url)}" target="_blank" rel="noopener">${esc(r.title || r.topic || "")}</a>` : esc(r.title || r.topic || "Topik belum dipilih")}
+            <div class="muted" style="font-size:0.8rem">${r.video_s ? `Durasi ${wiLength(r.video_s)}` : ""}${r.stage ? ` · ${esc(r.stage)}` : ""}</div>
+            <div class="sm-show-m">${ytBadge(r.status)} ${wiLink(r)}${wiPreviewLink(r)}</div>
+            ${r.error ? `<div class="sm-err">${esc(r.error)}</div>` : ""}</td>
+          <td class="sm-hide-m">${ytBadge(r.status)}${r.youtube_url ? `<div>${wiLink(r)}</div>` : ""}${wiPreviewLink(r)}</td>
+        </tr>`).join("") || `<tr><td colspan="4">Belum ada video.</td></tr>`;
+      document.querySelector("#wi-page-info").textContent = `Hal ${wiPage} / ${wiTotalPages} · ${d.total} video`;
+      document.querySelector("#wi-prev").disabled = wiPage <= 1;
+      document.querySelector("#wi-next-page").disabled = wiPage >= wiTotalPages;
+    }
+    function renderWhatifLog(d) {
+      const box = document.querySelector("#wi-log");
+      const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+      box.innerHTML = (d.lines || []).map((line) => {
+        const cls = /failed|error|gagal/i.test(line) ? "l-err" : /rendered|uploaded|started/.test(line) ? "l-ok" : "";
+        return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+      }).join("\n") || esc(d.error || "Log kosong.");
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    }
+    async function loadWhatif() {
+      if (wiBusy) return;
+      wiBusy = true;
+      const err = document.querySelector("#wi-error");
+      const qs = new URLSearchParams({ page: String(wiPage), pageSize: String(wiPageSize) });
+      for (const [key, sel] of [["status", "#wi-filter-status"], ["date", "#wi-filter-date"]]) {
+        const v = document.querySelector(sel).value;
+        if (v) qs.set(key, v);
+      }
+      try {
+        const [ov, hist, logs] = await Promise.all([
+          fetch(`${base}/api/whatif/overview`, { cache: "no-store" }),
+          fetch(`${base}/api/whatif/history?${qs}`, { cache: "no-store" }),
+          fetch(`${base}/api/whatif/logs?lines=200`, { cache: "no-store" }),
+        ]);
+        if (ov.status === 401 || hist.status === 401) { show(false); return; }
+        const od = await ov.json();
+        const hd = await hist.json();
+        const ld = await logs.json();
+        if (!ov.ok || !hist.ok) { err.textContent = od.message || hd.message || "Gagal memuat data What If"; return; }
+        err.textContent = "";
+        renderWhatifOverview(od);
+        renderWhatifHistory(hd);
+        renderWhatifLog(logs.ok ? ld : { error: ld.message });
+      } catch {
+        err.textContent = "Gagal memuat data What If";
+      } finally {
+        wiBusy = false;
+      }
+    }
+    setInterval(() => {
+      if (activeTab === "whatif" && !document.hidden) loadWhatif();
+    }, 15000);
+    document.querySelector("#wi-refresh").addEventListener("click", loadWhatif);
+    document.querySelector("#wi-log-refresh").addEventListener("click", loadWhatif);
+    for (const sel of ["#wi-filter-status", "#wi-filter-date"]) {
+      document.querySelector(sel).addEventListener("change", () => { wiPage = 1; loadWhatif(); });
+    }
+    document.querySelector("#wi-page-size").addEventListener("change", (event) => {
+      wiPageSize = Number(event.target.value) || 10;
+      wiPage = 1;
+      loadWhatif();
+    });
+    document.querySelector("#wi-prev").addEventListener("click", () => {
+      if (wiPage > 1) { wiPage -= 1; loadWhatif(); }
+    });
+    document.querySelector("#wi-next-page").addEventListener("click", () => {
+      if (wiPage < wiTotalPages) { wiPage += 1; loadWhatif(); }
+    });
+
     function begin() {
       show(true);
       paint();
@@ -1380,7 +1733,43 @@
       const btn = event.target.closest("button[data-path]");
       if (btn) loadFiles(btn.dataset.path);
     });
+    document.querySelector("#file-actions").addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-act]");
+      if (btn && !btn.disabled) fileAction(btn.dataset.act);
+    });
+    document.querySelector("#upload-input").addEventListener("change", (event) => {
+      const files = [...event.target.files];
+      event.target.value = "";
+      uploadFiles(files);
+    });
+    const dropZone = document.querySelector("#files-drop");
+    let dragDepth = 0;
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+    dropZone.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; dropZone.classList.add("dragging"); });
+    dropZone.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+    dropZone.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; dropZone.classList.remove("dragging"); } });
+    dropZone.addEventListener("drop", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      dropZone.classList.remove("dragging");
+      uploadFiles(e.dataTransfer.files);
+    });
+    document.querySelector("#check-all").addEventListener("change", (event) => {
+      const q = document.querySelector("#file-filter").value.trim().toLowerCase();
+      for (const e of entries.filter((e) => !q || e.name.toLowerCase().includes(q))) {
+        if (event.target.checked) checked.add(e.path); else checked.delete(e.path);
+      }
+      renderFiles();
+    });
     document.querySelector("#files").addEventListener("click", (event) => {
+      const box = event.target.closest("input[data-check]");
+      if (box) {
+        if (box.checked) checked.add(box.dataset.check); else checked.delete(box.dataset.check);
+        renderFileActions();
+        return;
+      }
+      if (event.target.closest(".check-cell")) return;
       const row = event.target.closest("tr[data-path]");
       if (!row) return;
       if (row.dataset.type === "dir") loadFiles(row.dataset.path);

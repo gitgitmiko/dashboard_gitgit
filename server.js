@@ -1,7 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, existsSync, readFileSync } from "node:fs";
-import { lstat, open, readFile, readdir, stat } from "node:fs/promises";
+import { createReadStream, createWriteStream, existsSync, readFileSync } from "node:fs";
+import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { homedir as osHomedir, hostname as osHostname, loadavg, uptime, cpus } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +58,9 @@ const SOCIAL_API_KEY = process.env.SOCIAL_API_KEY || "";
 // API monitoring KUISABON (youtube_short_automation, service kuisabon); dibaca read-only.
 const KUISABON_API_URL = (process.env.KUISABON_API_URL || "http://172.18.0.1:8797").replace(/\/+$/, "");
 const KUISABON_API_TOKEN = process.env.KUISABON_API_TOKEN || "";
+// API monitoring "Apa yang terjadi jika" (whatif-automation, service whatif); dibaca read-only.
+const WHATIF_API_URL = (process.env.WHATIF_API_URL || "http://172.18.0.1:8798").replace(/\/+$/, "");
+const WHATIF_API_TOKEN = process.env.WHATIF_API_TOKEN || "";
 const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
 const MAX_TERM = 8;
@@ -350,6 +355,147 @@ async function previewPath(rawPath) {
   } finally {
     await handle.close();
   }
+}
+
+function fsError(err) {
+  if (err.status) return err;
+  const known = { ENOENT: [404, "Tidak ditemukan"], EACCES: [403, "Tidak ada izin"], EPERM: [403, "Tidak ada izin"],
+    EEXIST: [409, "Nama sudah dipakai"], ENOTEMPTY: [409, "Folder tidak kosong"], EINVAL: [400, "Tidak bisa dipindah ke dalam dirinya sendiri"] };
+  const [status, message] = known[err.code] || [500, err.message];
+  return httpError(status, message);
+}
+
+function cleanName(name) {
+  const n = String(name ?? "").trim();
+  if (!n || n === "." || n === ".." || n.includes("/") || n.includes("\0")) throw httpError(400, "Nama tidak valid");
+  return n;
+}
+
+async function exists(p) {
+  try {
+    await lstat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// "laporan.txt" -> "laporan (salinan).txt", "laporan (salinan 2).txt", ... until the name is free.
+async function freeName(dir, name) {
+  if (!(await exists(join(dir, name)))) return join(dir, name);
+  const ext = name.startsWith(".") ? "" : extname(name);
+  const stem = ext ? name.slice(0, -ext.length) : name;
+  for (let i = 1; ; i++) {
+    const candidate = join(dir, `${stem} (salinan${i > 1 ? ` ${i}` : ""})${ext}`);
+    if (!(await exists(candidate))) return candidate;
+  }
+}
+
+// Folders that must never be deleted, moved or renamed from the dashboard.
+function guardProtected(p) {
+  if (p === "/" || p === HOME || dirname(p) === "/") throw httpError(403, `Folder ${p} dilindungi`);
+}
+
+// Folder actions from the Folder tab: mkdir, newfile, rename, copy, move, delete.
+async function fsOp(body) {
+  const op = body.op;
+  if (op === "mkdir" || op === "newfile") {
+    const target = join(resolveUserPath(body.dir), cleanName(body.name));
+    try {
+      if (op === "mkdir") await mkdir(target);
+      else await writeFile(target, "", { flag: "wx" });
+    } catch (err) {
+      throw fsError(err);
+    }
+    return { path: target };
+  }
+  if (op === "rename") {
+    const src = resolveUserPath(body.path);
+    guardProtected(src);
+    const target = join(dirname(src), cleanName(body.name));
+    if (target === src) return { path: src };
+    if (await exists(target)) throw httpError(409, "Nama sudah dipakai");
+    try {
+      await rename(src, target);
+    } catch (err) {
+      throw fsError(err);
+    }
+    return { path: target };
+  }
+  const paths = (Array.isArray(body.paths) ? body.paths : []).map(resolveUserPath);
+  if (!paths.length) throw httpError(400, "Tidak ada yang dipilih");
+  if (op === "copy" || op === "move") {
+    const dest = resolveUserPath(body.dest);
+    const done = [];
+    for (const src of paths) {
+      if (op === "move") guardProtected(src);
+      if (dest === src || dest.startsWith(`${src}/`)) throw httpError(400, `Tidak bisa ${op === "copy" ? "menyalin" : "memindah"} folder ke dalam dirinya sendiri: ${basename(src)}`);
+      if (op === "move" && dirname(src) === dest) continue;
+      const target = await freeName(dest, basename(src));
+      try {
+        if (op === "copy") {
+          await cp(src, target, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true, verbatimSymlinks: true });
+        } else {
+          try {
+            await rename(src, target);
+          } catch (err) {
+            if (err.code !== "EXDEV") throw err;
+            // Another disk: copy, then remove the original.
+            await cp(src, target, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true, verbatimSymlinks: true });
+            await rm(src, { recursive: true });
+          }
+        }
+      } catch (err) {
+        throw fsError(err);
+      }
+      done.push(target);
+    }
+    return { paths: done };
+  }
+  if (op === "delete") {
+    for (const src of paths) guardProtected(src);
+    for (const src of paths) {
+      try {
+        await rm(src, { recursive: true });
+      } catch (err) {
+        throw fsError(err);
+      }
+    }
+    return { deleted: paths.length };
+  }
+  throw httpError(400, "Operasi tidak dikenal");
+}
+
+// Upload from the Folder tab: the raw request body is streamed to a temp file next to
+// the target, then renamed into place so a broken upload never leaves a half-written file.
+async function uploadFile(req, rawDir, rawName, overwrite) {
+  const dir = resolveUserPath(rawDir);
+  const target = join(dir, cleanName(rawName));
+  let st;
+  try {
+    st = await stat(dir);
+  } catch (err) {
+    throw fsError(err);
+  }
+  if (!st.isDirectory()) throw httpError(400, "Bukan folder");
+  try {
+    const cur = await lstat(target);
+    if (!overwrite) throw httpError(409, "Nama sudah dipakai");
+    if (cur.isDirectory()) throw httpError(409, "Sudah ada folder dengan nama itu");
+  } catch (err) {
+    if (err.status) throw err;
+    if (err.code !== "ENOENT") throw fsError(err);
+  }
+  const tmp = join(dir, `.${basename(target)}.upload-${randomBytes(4).toString("hex")}`);
+  try {
+    await pipeline(req, createWriteStream(tmp, { flags: "wx" }));
+    if (!overwrite && (await exists(target))) throw httpError(409, "Nama sudah dipakai");
+    await rename(tmp, target);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw fsError(err);
+  }
+  return { path: target, size: (await stat(target)).size };
 }
 
 async function sendFile(req, res, rawPath, download) {
@@ -747,6 +893,27 @@ async function fetchKuisabon(endpoint, params) {
   return data;
 }
 
+async function fetchWhatif(endpoint, params) {
+  if (!WHATIF_API_TOKEN) throw httpError(503, "WHATIF_API_TOKEN belum di-set di .env dashboard");
+  const qs = new URLSearchParams();
+  for (const key of ["status", "date", "page", "pageSize", "lines"]) {
+    const v = params.get(key);
+    if (v) qs.set(key, v);
+  }
+  let res;
+  try {
+    res = await fetch(`${WHATIF_API_URL}/api/monitor/${endpoint}${qs.size ? `?${qs}` : ""}`, {
+      headers: { "X-Token": WHATIF_API_TOKEN },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    throw httpError(502, "API Apa yang terjadi jika tidak bisa dihubungi (service whatif mati?)");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw httpError(res.status, data.error || `API whatif error ${res.status}`);
+  return data;
+}
+
 function cctvRecordingFromFile(dateDir, name, st) {
   const m = /^(\d{2})-(\d{2})-(\d{2})\.mp4$/.exec(name);
   return {
@@ -883,6 +1050,37 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Link download preview video What If, publik tanpa login: kuncinya ada di URL, dan service whatif
+  // berhenti melayaninya begitu video sudah terupload ke YouTube.
+  const wiPreview = /^\/preview\/whatif\/([\w-]+)\/(\w+)\.mp4$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && wiPreview && (req.method === "GET" || req.method === "HEAD")) {
+    let up;
+    try {
+      up = await fetch(`${WHATIF_API_URL}/api/preview/${wiPreview[1]}/${wiPreview[2]}.mp4`, {
+        headers: req.headers.range ? { Range: req.headers.range } : {},
+      });
+    } catch {
+      send(res, 502, "Service whatif tidak bisa dihubungi");
+      return;
+    }
+    if (!up.ok) {
+      send(res, 404, "Link preview sudah tidak berlaku (video sudah terupload ke YouTube).");
+      return;
+    }
+    const headers = { "Cache-Control": "no-store" };
+    for (const h of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition"]) {
+      if (up.headers.get(h)) headers[h] = up.headers.get(h);
+    }
+    res.writeHead(up.status, headers);
+    if (!up.body || req.method === "HEAD") {
+      up.body?.cancel();
+      res.end();
+      return;
+    }
+    Readable.fromWeb(up.body).on("error", () => res.destroy()).pipe(res);
+    return;
+  }
+
   if (path === `${base}/api/session` && req.method === "GET") {
     const ok = Boolean(sessionUser(req));
     sendJson(res, ok ? 200 : 401, { ok, home: HOME });
@@ -985,6 +1183,17 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const wiMatch = /^\/api\/whatif\/(overview|history|logs)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && wiMatch && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await fetchWhatif(wiMatch[1], url.searchParams)) });
+    } catch (err) {
+      sendJson(res, err.status || 502, { ok: false, message: err.message });
+    }
+    return;
+  }
+
   if (path === `${base}/api/cctv/recordings` && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
@@ -1030,6 +1239,42 @@ const server = createServer(async (req, res) => {
     try {
       sendJson(res, 200, { ok: true, ...(await previewPath(url.searchParams.get("path"))) });
     } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/fs/op` && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+      sendJson(res, 415, { ok: false, message: "Harus JSON" });
+      return;
+    }
+    try {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        throw httpError(400, "JSON tidak valid");
+      }
+      sendJson(res, 200, { ok: true, ...(await fsOp(body)) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/fs/upload` && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    // Bukan tipe yang bisa dikirim form HTML lintas situs, sama seperti syarat JSON di /api/fs/op.
+    if (!String(req.headers["content-type"] || "").startsWith("application/octet-stream")) {
+      sendJson(res, 415, { ok: false, message: "Harus application/octet-stream" });
+      return;
+    }
+    try {
+      sendJson(res, 200, { ok: true, ...(await uploadFile(req, url.searchParams.get("dir"), url.searchParams.get("name"), url.searchParams.get("overwrite") === "1")) });
+    } catch (err) {
+      req.resume();
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
