@@ -30,6 +30,7 @@
     main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); padding-bottom: calc(48px + env(safe-area-inset-bottom)); }
     h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.03em; }
     h2 { margin: 0 0 10px; font-size: 1.1rem; }
+    h3 { margin: 16px 0 8px; font-size: 0.95rem; color: var(--muted, inherit); }
     .sub { color: var(--muted); margin: 6px 0 22px; }
     .card {
       background: var(--card);
@@ -256,6 +257,35 @@
           <div class="table-wrap"><table>
             <thead><tr><th>Antarmuka</th><th>Unduh</th><th>Unggah</th></tr></thead>
             <tbody id="net"></tbody>
+          </table></div>
+        </section>
+        <section class="card">
+          <h2>Alamat IP &amp; Domain</h2>
+          <p class="muted" id="addr-error"></p>
+          <h3>Domain / subdomain (Cloudflare Tunnel)</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Domain</th><th>Diteruskan ke</th><th>Keterangan</th></tr></thead>
+            <tbody id="addr-domains"></tbody>
+          </table></div>
+          <h3>IP server (antarmuka)</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Antarmuka</th><th>IP</th><th>Keterangan</th></tr></thead>
+            <tbody id="addr-ifaces"></tbody>
+          </table></div>
+          <h3>Port yang terbuka</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Alamat</th><th>Jangkauan</th><th>Keterangan</th></tr></thead>
+            <tbody id="addr-ports"></tbody>
+          </table></div>
+          <h3>Container Docker</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Container</th><th>IP</th><th>Image</th></tr></thead>
+            <tbody id="addr-docker"></tbody>
+          </table></div>
+          <h3>Perangkat di LAN</h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>IP</th><th>MAC</th><th>Status</th><th>Keterangan</th></tr></thead>
+            <tbody id="addr-lan"></tbody>
           </table></div>
         </section>
       </div>
@@ -703,6 +733,23 @@
     document.querySelector("#close-free-modal").addEventListener("click", () => document.querySelector("#free-models-modal").classList.add("hidden"));
     document.querySelector("#free-models-modal").addEventListener("click", (e) => { if (e.target.id === "free-models-modal") e.target.classList.add("hidden"); });
     setInterval(() => { if (activeTab === "overview" && !document.hidden) loadFreeUsage(); }, 30000);
+
+    async function loadAddresses() {
+      const res = await fetch(`${base}/api/addresses`, { cache: "no-store" });
+      if (res.status === 401) return;
+      const d = await res.json();
+      document.querySelector("#addr-error").textContent = d.ok ? "" : d.message || "Gagal memuat alamat";
+      if (!d.ok) return;
+      const rows = (id, list, cols, fn) => {
+        document.querySelector(id).innerHTML = list.map(fn).join("") || `<tr><td colspan="${cols}">Tidak ada data</td></tr>`;
+      };
+      rows("#addr-domains", d.domains, 3, (r) => `<tr><td><a href="https://${esc(r.hostname)}${esc(r.path)}" target="_blank" rel="noopener">${esc(r.hostname)}${esc(r.path)}</a></td><td>${esc(r.service)}</td><td>${esc(r.info)}</td></tr>`);
+      rows("#addr-ifaces", d.interfaces, 3, (r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.address)}</td><td>${esc(r.info)}</td></tr>`);
+      rows("#addr-ports", d.listeners, 3, (r) => `<tr><td>${esc(r.address.includes(":") ? `[${r.address}]` : r.address)}:${r.port}</td><td>${esc(r.scope)}</td><td>${esc(r.info)}</td></tr>`);
+      rows("#addr-docker", d.docker, 3, (r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.ip)}</td><td>${esc(r.image)}</td></tr>`);
+      rows("#addr-lan", d.lan, 4, (r) => `<tr><td>${esc(r.ip)}</td><td>${esc(r.mac)}</td><td>${esc(r.state)}</td><td>${esc(r.info)}</td></tr>`);
+    }
+    setInterval(() => { if (activeTab === "overview" && !document.hidden) loadAddresses(); }, 60000);
 
     async function paint() {
       const res = await fetch(`${base}/api/stats`, { cache: "no-store" });
@@ -1473,6 +1520,7 @@
       show(true);
       paint();
       loadFreeUsage();
+      loadAddresses();
       if (!timer) timer = setInterval(paint, 3000);
       restoreTerminals();
     }

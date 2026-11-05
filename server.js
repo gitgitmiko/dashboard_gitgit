@@ -4,7 +4,7 @@ import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile 
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { homedir as osHomedir, hostname as osHostname, loadavg, uptime, cpus } from "node:os";
+import { homedir as osHomedir, hostname as osHostname, loadavg, uptime, cpus, networkInterfaces } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile, spawn } from "node:child_process";
@@ -224,6 +224,148 @@ async function collectStats() {
     disks: await readDisks(),
     network: networkRates(),
   };
+}
+
+// Keterangan alamat yang sudah dikenal di server ini. Yang tidak ada di sini tetap
+// ditampilkan dengan nama proses (kalau terbaca) supaya layanan baru ikut terlihat.
+const KNOWN_PORTS = {
+  22: "SSH — akses remote shell ke server",
+  53: "DNS — AdGuard Home (192.168.18.207) / systemd-resolved (127.0.0.53)",
+  631: "CUPS — layanan printer",
+  3000: "AdGuard Home — panel admin web (DNS filter iklan untuk LAN)",
+  3306: "MySQL — database",
+  33060: "MySQL X Protocol",
+  4173: "WEBUNIME — situs utama gitgitmiko.my.id",
+  4180: "Dashboard ini (gitgitmiko.my.id/agen)",
+  5037: "ADB server — koneksi debug Android",
+  5678: "n8n — otomasi workflow Instagram (container Docker)",
+  8790: "Media n8n — nginx penyaji file media (media.gitgitmiko.my.id)",
+  8791: "scraper-social-api — API konten Sosmed (scraper-data-gitgit)",
+  8796: "gitgitdev-site — situs gitgitdev.my.id",
+  8797: "KUISABON — API youtube_short_automation",
+  8798: "What If — API pipeline whatif-automation",
+  20128: "9router — router/proxy model AI (9router.gitgitmiko.my.id)",
+  20241: "cloudflared — metrik tunnel Cloudflare",
+};
+const KNOWN_LAN = {
+  "192.168.18.1": "Router / gateway internet (DHCP)",
+  "192.168.18.102": "Kamera CCTV (RTSP, direkam ke /mnt/cctv)",
+  "192.168.18.207": "Server ini (gitgit-server)",
+};
+const CLOUDFLARED_CONFIG = process.env.CLOUDFLARED_CONFIG || join(HOME, ".cloudflared", "config.yml");
+let addressCache = { at: 0, data: null };
+
+function describeInterface(name) {
+  if (name === "lo") return "Loopback — hanya bisa diakses dari server sendiri";
+  if (/^wl/.test(name)) return "Wi-Fi — jaringan lokal (LAN) rumah";
+  if (/^(en|eth)/.test(name)) return "Ethernet — jaringan lokal (LAN)";
+  if (name === "docker0") return "Bridge default Docker";
+  if (/^br-/.test(name)) return "Bridge jaringan Docker compose (n8n-instagram)";
+  if (/^(tun|wg|tailscale)/.test(name)) return "VPN / tunnel";
+  return "Antarmuka jaringan";
+}
+
+function readTunnelIngress() {
+  let text;
+  try {
+    text = readFileSync(CLOUDFLARED_CONFIG, "utf8");
+  } catch {
+    return [];
+  }
+  // Parser kecil untuk bagian ingress config.yml (cukup untuk format cloudflared yang datar).
+  const rules = [];
+  let cur = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const m = raw.match(/^\s*(-\s*)?(hostname|path|service):\s*(.+?)\s*$/);
+    if (!m) continue;
+    if (m[1]) {
+      cur = {};
+      rules.push(cur);
+    }
+    if (cur) cur[m[2]] = m[3].replace(/^["']|["']$/g, "");
+  }
+  return rules
+    .filter((r) => r.hostname)
+    .map((r) => {
+      const port = Number((r.service.match(/:(\d+)(\/|$)/) || [])[1]);
+      return {
+        hostname: r.hostname,
+        path: r.path ? r.path.replace(/^\^/, "") : "",
+        service: r.service,
+        info: KNOWN_PORTS[port] || "",
+      };
+    });
+}
+
+async function readListeners() {
+  let out = "";
+  try {
+    ({ stdout: out } = await execFileAsync("ss", ["-H", "-ltnp"], { timeout: 4000 }));
+  } catch {
+    return [];
+  }
+  const seen = new Map();
+  for (const line of out.split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 4) continue;
+    const local = parts[3];
+    const idx = local.lastIndexOf(":");
+    const rawAddress = local.slice(0, idx).replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+    // IPv4 dan IPv6 wildcard untuk port yang sama dianggap satu baris.
+    const address = rawAddress === "::" || rawAddress === "*" ? "0.0.0.0" : rawAddress;
+    const port = Number(local.slice(idx + 1));
+    const proc = (line.match(/users:\(\("([^"]+)"/) || [])[1] || "";
+    const key = `${address}:${port}`;
+    if (!seen.has(key)) seen.set(key, { address, port, process: proc, info: KNOWN_PORTS[port] || (proc ? `Proses ${proc}` : "Tidak dikenal") });
+  }
+  const scope = (a) => (a === "0.0.0.0" ? "Semua antarmuka (LAN)" : a.startsWith("127.") || a === "::1" ? "Lokal saja" : a.startsWith("172.") ? "Docker" : "LAN");
+  return [...seen.values()].map((r) => ({ ...r, scope: scope(r.address) })).sort((a, b) => a.port - b.port || a.address.localeCompare(b.address));
+}
+
+async function readDockerAddresses() {
+  try {
+    const { stdout } = await execFileAsync("docker", ["ps", "-q"], { timeout: 4000 });
+    const ids = stdout.split("\n").filter(Boolean);
+    if (!ids.length) return [];
+    const { stdout: info } = await execFileAsync(
+      "docker",
+      ["inspect", "--format", "{{.Name}}|{{.Config.Image}}|{{.HostConfig.NetworkMode}}|{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", ...ids],
+      { timeout: 4000 },
+    );
+    return info
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [name, image, mode, ips] = line.split("|");
+        return { name: name.replace(/^\//, ""), image, network: mode, ip: mode === "host" ? "pakai IP host" : ips.trim() || "—" };
+      });
+  } catch {
+    return [];
+  }
+}
+
+async function readLanNeighbors() {
+  try {
+    const { stdout } = await execFileAsync("ip", ["-4", "neigh"], { timeout: 4000 });
+    return stdout
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .filter((p) => p.length >= 5 && p[3] === "lladdr" && !p[2].startsWith("br-") && p[2] !== "docker0")
+      .map((p) => ({ ip: p[0], dev: p[2], mac: p[4], state: p[p.length - 1], info: KNOWN_LAN[p[0]] || "Perangkat lain di LAN (HP/laptop via DHCP)" }))
+      .sort((a, b) => a.ip.localeCompare(b.ip, undefined, { numeric: true }));
+  } catch {
+    return [];
+  }
+}
+
+async function collectAddresses() {
+  if (addressCache.data && Date.now() - addressCache.at < 30000) return addressCache.data;
+  const interfaces = Object.entries(networkInterfaces())
+    .flatMap(([name, list]) => (list || []).filter((a) => a.family === "IPv4").map((a) => ({ name, address: a.cidr || a.address, info: describeInterface(name) })));
+  const [listeners, docker, lan] = await Promise.all([readListeners(), readDockerAddresses(), readLanNeighbors()]);
+  const data = { interfaces, domains: readTunnelIngress(), listeners, docker, lan };
+  addressCache = { at: Date.now(), data };
+  return data;
 }
 
 function cookie(token, maxAge) {
@@ -1136,6 +1278,16 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       sendJson(res, 200, { ok: true, ...(await collectStats()) });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/addresses` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await collectAddresses()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
     }
