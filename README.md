@@ -1,28 +1,33 @@
 # Dashboard Gitgit
 
-Dasbor pemakaian server, penjelajah folder, dan terminal web. Dipasang di `https://gitgitmiko.my.id/agen/`.
+Dasbor pemakaian server, penjelajah folder, terminal web, dan pemantau otomasi. Dibuka di **`https://dashboard.gitgitmiko.my.id/`** (dilindungi Cloudflare Access + kata sandi dashboard).
 
 Kata sandi dibaca dari environment `DASHBOARD_PASSWORD` atau file `.env` di folder ini (tidak disimpan di repo).
 
 ```bash
 npm install
-# Isi DASHBOARD_PASSWORD di .env, atau ekspor sebelum menjalankan:
-# DASHBOARD_PASSWORD=... HOST=127.0.0.1 PORT=4180 BASE_PATH=/agen node server.js
+npm run build          # pasang dependency web/ lalu build UI ke web/dist (wajib setelah git pull)
 HOST=127.0.0.1 PORT=4180 BASE_PATH=/agen node server.js
 ```
 
-### UI baru (React) — masa transisi
+UI dibangun dengan Vite + React + TypeScript + Tailwind + shadcn/ui di folder `web/`. Untuk pengembangan: `cd web && npm run dev` (http://localhost:5173/agen/v2/, API diteruskan ke :4180). Perubahan yang hanya di `web/` cukup di-build ulang, tanpa restart service.
 
-UI baru dibangun dengan Vite + React + TypeScript + Tailwind + shadcn/ui di folder `web/` dan disajikan di **`https://dashboard.gitgitmiko.my.id/`** (juga di `https://gitgitmiko.my.id/agen/v2/`). Semua tab sudah tersedia di UI baru; UI lama di `/agen/` masih bisa dipakai selama masa transisi.
+### Alamat dan akses
 
-Subdomain dilayani proses yang sama (port 4180, lewat Cloudflare Tunnel). Untuk host `DASHBOARD_HOST` (default `dashboard.gitgitmiko.my.id`), path di luar `/agen` dipetakan ke UI baru, sedangkan `/agen/...` (API, WebSocket terminal, UI lama) dilayani apa adanya. Cookie sesi di host itu memakai `Path=/`.
+Satu proses (port 4180, hanya loopback) melayani semuanya lewat Cloudflare Tunnel:
 
-```bash
-npm run build          # pasang dependency web/ lalu build ke web/dist (wajib setelah git pull)
-cd web && npm run dev  # mode pengembangan di http://localhost:5173/agen/v2/, API diteruskan ke :4180
-```
+| Alamat | Isi |
+|---|---|
+| `https://dashboard.gitgitmiko.my.id/` | UI baru. Path di luar `/agen` dipetakan ke `web/dist`; cookie sesi `Path=/`. |
+| `https://dashboard.gitgitmiko.my.id/agen/...` | API, WebSocket terminal, dan unduhan (dipakai UI). `/agen` sendiri dialihkan ke `/`. |
+| `https://dashboard.gitgitmiko.my.id/agen/legacy/` | UI lama (cadangan sementara). |
+| `https://gitgitmiko.my.id/agen/preview/whatif/...` | Link preview video What If, publik tanpa login. |
+| `https://gitgitmiko.my.id/agen/...` lainnya | Dialihkan ke subdomain; login/API/terminal ditolak (403). |
+| `http://127.0.0.1:4180/agen/` | Akses lokal untuk perawatan (UI lama, tanpa pembatasan host). |
 
-Catatan: terminal web berjalan di dalam service `dashboard-gitgit`, jadi `systemctl --user restart dashboard-gitgit` ikut menutup semua terminal yang terbuka. Perubahan yang hanya di `web/` cukup di-build, tanpa restart.
+Host publik selain `DASHBOARD_HOST` (default `dashboard.gitgitmiko.my.id`) tidak dilindungi Cloudflare Access, jadi dikunci seperti di atas. Untuk membukanya lagi (mis. Access bermasalah), tambahkan `PUBLIC_HOST_LOCKDOWN=0` di `.env` lalu restart service.
+
+Catatan: terminal web berjalan di dalam service `dashboard-gitgit`, jadi `systemctl --user restart dashboard-gitgit` ikut menutup semua terminal yang terbuka.
 
 Setelah masuk:
 

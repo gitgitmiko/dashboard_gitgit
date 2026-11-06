@@ -20,6 +20,10 @@ const WEB_DIST = resolve(process.env.WEB_DIST || join(__dirname, "web", "dist"))
 // Subdomain khusus dashboard: UI baru di root "/", sedangkan BASE/... (API, WebSocket, UI lama) tetap
 // dilayani apa adanya supaya sesi login dan terminal sama dengan akses lewat domain utama.
 const DASHBOARD_HOST = (process.env.DASHBOARD_HOST || "dashboard.gitgitmiko.my.id").toLowerCase();
+// Host publik lain (mis. gitgitmiko.my.id/agen lewat tunnel) tidak dilindungi Cloudflare Access, jadi hanya
+// melayani link preview publik dan mengalihkan sisanya ke DASHBOARD_HOST. PUBLIC_HOST_LOCKDOWN=0 mematikannya.
+const PUBLIC_HOST_LOCKDOWN = process.env.PUBLIC_HOST_LOCKDOWN !== "0";
+const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 const STATIC_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -253,7 +257,7 @@ const KNOWN_PORTS = {
   33060: "MySQL X Protocol",
   4173: "WEBUNIME — situs utama gitgitmiko.my.id",
   5000: "Frigate — API internal NVR",
-  4180: "Dashboard ini (gitgitmiko.my.id/agen)",
+  4180: "Dashboard ini (dashboard.gitgitmiko.my.id; /agen di domain utama hanya preview publik)",
   5037: "ADB server — koneksi debug Android",
   5678: "n8n — otomasi workflow Instagram (container Docker)",
   8790: "Media n8n — nginx penyaji file media (media.gitgitmiko.my.id)",
@@ -390,8 +394,17 @@ async function collectAddresses() {
   return data;
 }
 
+function requestHost(req) {
+  return String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "");
+}
+
 function isDashboardHost(req) {
-  return String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "") === DASHBOARD_HOST;
+  return requestHost(req) === DASHBOARD_HOST;
+}
+
+/** Request dari host publik selain subdomain dashboard (server ini hanya listen di loopback, jadi akses lokal = perawatan). */
+function isLockedPublicHost(req) {
+  return PUBLIC_HOST_LOCKDOWN && !isDashboardHost(req) && !LOCAL_HOSTS.has(requestHost(req));
 }
 
 function cookie(req, token, maxAge) {
@@ -1225,6 +1238,23 @@ const server = createServer(async (req, res) => {
   const path = pathname.replace(/\/+$/, "") || "/";
   const base = BASE;
 
+  if (isLockedPublicHost(req) && !path.startsWith(`${base}/preview/whatif/`)) {
+    if (req.method === "GET" || req.method === "HEAD") {
+      res.writeHead(302, { Location: `https://${DASHBOARD_HOST}/`, "Cache-Control": "no-store" });
+      res.end();
+    } else {
+      sendJson(res, 403, { ok: false, message: `Dashboard dipindah ke https://${DASHBOARD_HOST}/` });
+    }
+    return;
+  }
+
+  // Di subdomain, UI baru ada di "/": BASE sendiri dialihkan ke sana, UI lama tetap ada di BASE/legacy.
+  if (isDashboardHost(req) && path === base && req.method === "GET") {
+    res.writeHead(302, { Location: "/", "Cache-Control": "no-store" });
+    res.end();
+    return;
+  }
+
   if ((path === `${base}/v2` || path.startsWith(`${base}/v2/`)) && (req.method === "GET" || req.method === "HEAD")) {
     // Aset dirujuk relatif (./assets/...), jadi halaman harus dibuka dengan garis miring di akhir.
     if (pathname === `${base}/v2`) {
@@ -1266,7 +1296,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (path === base && req.method === "GET") {
+  if ((path === base || path === `${base}/legacy`) && req.method === "GET") {
     const file = join(PUBLIC_DIR, "index.html");
     if (!existsSync(file)) {
       send(res, 500, "Halaman tidak ada");
@@ -1548,7 +1578,7 @@ const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const path = url.pathname.replace(/\/+$/, "") || "/";
-  if (path !== `${BASE}/ws/terminal`) {
+  if (path !== `${BASE}/ws/terminal` || isLockedPublicHost(req)) {
     socket.destroy();
     return;
   }
