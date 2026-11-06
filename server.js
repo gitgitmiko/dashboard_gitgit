@@ -1189,14 +1189,30 @@ async function sendCctvFile(req, res, rawDate, rawName, download) {
   // Nama berkas di disk cuma jam (05-00-00.mp4); saat diunduh beri tanggal
   // lengkap supaya tidak bentrok/membingungkan, mis. cctv_2026-10-24_05-00-00.mp4.
   const name = safeDownloadName(`cctv_${basename(dirname(target))}_${basename(target)}`);
-  res.writeHead(200, {
+  const headers = {
     "Content-Type": "video/mp4",
-    "Content-Length": st.size,
     "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${name}"`,
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
-    "Accept-Ranges": "none",
-  });
+    "Accept-Ranges": "bytes",
+  };
+  // Range (satu rentang saja) supaya video bisa di-seek saat diputar di browser. Ukuran diambil saat
+  // request, jadi berkas jam berjalan yang masih ditulis ffmpeg tetap dilayani sampai byte terakhirnya.
+  const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || "").trim());
+  if (range && (range[1] || range[2]) && st.size > 0) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, st.size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
+    if (start >= st.size || start > end) {
+      res.writeHead(416, { "Content-Range": `bytes */${st.size}` });
+      res.end();
+      return;
+    }
+    res.writeHead(206, { ...headers, "Content-Length": end - start + 1, "Content-Range": `bytes ${start}-${end}/${st.size}` });
+    if (req.method === "HEAD") { res.end(); return; }
+    createReadStream(target, { start, end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, { ...headers, "Content-Length": st.size });
   if (req.method === "HEAD") { res.end(); return; }
   createReadStream(target).pipe(res);
 }

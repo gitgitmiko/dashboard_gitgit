@@ -7,7 +7,9 @@ import { DialogsProvider } from "@/lib/dialogs";
 import { SessionContext } from "@/lib/session";
 import { tabFromHash, type TabId } from "@/nav";
 import { Legacy } from "@/pages/legacy";
+import { Cctv } from "@/pages/cctv";
 import { Files } from "@/pages/files";
+import { Logs } from "@/pages/logs";
 import { Overview } from "@/pages/overview";
 
 // xterm cukup besar, jadi kode terminal baru diunduh saat tab Terminal pertama kali dibuka.
@@ -18,8 +20,8 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   overview: Overview,
   files: Files,
   terminal: TerminalPage,
-  logs: Legacy,
-  cctv: Legacy,
+  logs: Logs,
+  cctv: Cctv,
   sosmed: Legacy,
   youtube: Legacy,
   whatif: Legacy,
