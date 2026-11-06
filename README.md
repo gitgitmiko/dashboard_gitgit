@@ -11,6 +11,17 @@ npm install
 HOST=127.0.0.1 PORT=4180 BASE_PATH=/agen node server.js
 ```
 
+### UI baru (React) — masa transisi
+
+UI baru dibangun dengan Vite + React + TypeScript + Tailwind + shadcn/ui di folder `web/` dan disajikan di `https://gitgitmiko.my.id/agen/v2/`. Tab yang belum dipindah menautkan ke UI lama di `/agen/`.
+
+```bash
+npm run build          # pasang dependency web/ lalu build ke web/dist (wajib setelah git pull)
+cd web && npm run dev  # mode pengembangan di http://localhost:5173/agen/v2/, API diteruskan ke :4180
+```
+
+Catatan: terminal web berjalan di dalam service `dashboard-gitgit`, jadi `systemctl --user restart dashboard-gitgit` ikut menutup semua terminal yang terbuka. Perubahan yang hanya di `web/` cukup di-build, tanpa restart.
+
 Setelah masuk:
 
 - **Ringkasan** — CPU, memori, penyimpanan, jaringan, serta daftar alamat IP & domain: subdomain Cloudflare Tunnel (dibaca dari `~/.cloudflared/config.yml`), IP antarmuka server, port yang terbuka, IP container Docker, dan perangkat di LAN — masing-masing dengan keterangan fungsinya.

@@ -15,6 +15,18 @@ import { WebSocketServer } from "ws";
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
+// UI baru (React, hasil `npm run build` di web/); selama transisi disajikan di BASE/v2/.
+const WEB_DIST = join(__dirname, "web", "dist");
+const STATIC_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+};
 
 function loadDotEnv(filePath) {
   if (!existsSync(filePath)) return;
@@ -233,9 +245,11 @@ const KNOWN_PORTS = {
   53: "DNS — AdGuard Home (192.168.18.207) / systemd-resolved (127.0.0.53)",
   631: "CUPS — layanan printer",
   3000: "AdGuard Home — panel admin web (DNS filter iklan untuk LAN)",
+  1883: "Mosquitto — broker MQTT (Home Assistant ↔ Frigate)",
   3306: "MySQL — database",
   33060: "MySQL X Protocol",
   4173: "WEBUNIME — situs utama gitgitmiko.my.id",
+  5000: "Frigate — API internal NVR",
   4180: "Dashboard ini (gitgitmiko.my.id/agen)",
   5037: "ADB server — koneksi debug Android",
   5678: "n8n — otomasi workflow Instagram (container Docker)",
@@ -243,7 +257,11 @@ const KNOWN_PORTS = {
   8791: "scraper-social-api — API konten Sosmed (scraper-data-gitgit)",
   8796: "gitgitdev-site — situs gitgitdev.my.id",
   8797: "KUISABON — API youtube_short_automation",
+  8123: "Home Assistant — otomasi rumah (ha.gitgitmiko.my.id)",
+  8554: "Frigate — restream RTSP kamera (go2rtc)",
+  8555: "Frigate — WebRTC live view kamera",
   8798: "What If — API pipeline whatif-automation",
+  8971: "Frigate — NVR/deteksi objek CCTV (cctv.gitgitmiko.my.id)",
   20128: "9router — router/proxy model AI (9router.gitgitmiko.my.id)",
   20241: "cloudflared — metrik tunnel Cloudflare",
 };
@@ -260,7 +278,8 @@ function describeInterface(name) {
   if (/^wl/.test(name)) return "Wi-Fi — jaringan lokal (LAN) rumah";
   if (/^(en|eth)/.test(name)) return "Ethernet — jaringan lokal (LAN)";
   if (name === "docker0") return "Bridge default Docker";
-  if (/^br-/.test(name)) return "Bridge jaringan Docker compose (n8n-instagram)";
+  if (/^br-/.test(name)) return "Bridge jaringan Docker compose";
+  if (/^veth/.test(name)) return "Kabel virtual container Docker";
   if (/^(tun|wg|tailscale)/.test(name)) return "VPN / tunnel";
   return "Antarmuka jaringan";
 }
@@ -1177,6 +1196,47 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const base = BASE;
+
+  if ((path === `${base}/v2` || path.startsWith(`${base}/v2/`)) && (req.method === "GET" || req.method === "HEAD")) {
+    // Aset dirujuk relatif (./assets/...), jadi halaman harus dibuka dengan garis miring di akhir.
+    if (url.pathname === `${base}/v2`) {
+      res.writeHead(301, { Location: `${base}/v2/${url.search}` });
+      res.end();
+      return;
+    }
+    const rel = path.slice(`${base}/v2`.length + 1);
+    let file = resolve(WEB_DIST, rel || "index.html");
+    if (!file.startsWith(`${WEB_DIST}/`)) {
+      send(res, 400, "Path tidak valid");
+      return;
+    }
+    // Rute yang bukan berkas (mis. /agen/v2/apa-saja) jatuh ke index.html; aset yang hilang tetap 404.
+    if (!existsSync(file) || !(await stat(file)).isFile()) {
+      if (rel.startsWith("assets/")) {
+        send(res, 404, "Tidak ditemukan");
+        return;
+      }
+      file = join(WEB_DIST, "index.html");
+    }
+    if (!existsSync(file)) {
+      send(res, 503, "UI baru belum di-build: jalankan `npm run build` di folder web/");
+      return;
+    }
+    const st = await stat(file);
+    res.writeHead(200, {
+      "Content-Type": STATIC_TYPES[extname(file)] || "application/octet-stream",
+      "Content-Length": st.size,
+      // Nama berkas di assets/ mengandung hash isi, jadi aman di-cache lama; index.html selalu segar.
+      "Cache-Control": rel.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    createReadStream(file).pipe(res);
+    return;
+  }
 
   if (path === base && req.method === "GET") {
     const file = join(PUBLIC_DIR, "index.html");

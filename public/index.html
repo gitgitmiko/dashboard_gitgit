@@ -1523,6 +1523,9 @@
       loadAddresses();
       if (!timer) timer = setInterval(paint, 3000);
       restoreTerminals();
+      // UI baru (/agen/v2/) menautkan tab yang belum dipindah ke sini lewat #nama-tab.
+      const hashTab = location.hash.replace(/^#\/?/, "");
+      if (["files", "terminal", "logs", "cctv", "sosmed", "youtube", "whatif"].includes(hashTab)) showTab(hashTab);
     }
 
     function b64ToUint8(b64) {
