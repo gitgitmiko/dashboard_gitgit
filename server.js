@@ -17,6 +17,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
 // UI baru (React, hasil `npm run build` di web/); selama transisi disajikan di BASE/v2/.
 const WEB_DIST = join(__dirname, "web", "dist");
+// Subdomain khusus dashboard: UI baru di root "/", sedangkan BASE/... (API, WebSocket, UI lama) tetap
+// dilayani apa adanya supaya sesi login dan terminal sama dengan akses lewat domain utama.
+const DASHBOARD_HOST = (process.env.DASHBOARD_HOST || "dashboard.gitgitmiko.my.id").toLowerCase();
 const STATIC_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -387,9 +390,15 @@ async function collectAddresses() {
   return data;
 }
 
-function cookie(token, maxAge) {
+function isDashboardHost(req) {
+  return String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "") === DASHBOARD_HOST;
+}
+
+function cookie(req, token, maxAge) {
   const secure = process.env.COOKIE_SECURE === "0" ? "" : "; Secure";
-  return `dg_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=${BASE}; Max-Age=${maxAge}${secure}`;
+  // Di subdomain, UI ada di "/" sementara API di BASE, jadi cookie harus berlaku untuk seluruh host.
+  const path = isDashboardHost(req) ? "/" : BASE;
+  return `dg_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=${path}; Max-Age=${maxAge}${secure}`;
 }
 
 async function readBody(req) {
@@ -1194,12 +1203,15 @@ async function sendCctvFile(req, res, rawDate, rawName, download) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+  let pathname = url.pathname;
+  // dashboard.<domain>/x → BASE/v2/x (UI baru); BASE/... di host itu tidak diubah.
+  if (isDashboardHost(req) && pathname !== BASE && !pathname.startsWith(`${BASE}/`)) pathname = `${BASE}/v2${pathname}`;
+  const path = pathname.replace(/\/+$/, "") || "/";
   const base = BASE;
 
   if ((path === `${base}/v2` || path.startsWith(`${base}/v2/`)) && (req.method === "GET" || req.method === "HEAD")) {
     // Aset dirujuk relatif (./assets/...), jadi halaman harus dibuka dengan garis miring di akhir.
-    if (url.pathname === `${base}/v2`) {
+    if (pathname === `${base}/v2`) {
       res.writeHead(301, { Location: `${base}/v2/${url.search}` });
       res.end();
       return;
@@ -1300,7 +1312,7 @@ const server = createServer(async (req, res) => {
     sessions.set(token, { expires: Date.now() + SESSION_MS });
     send(res, 200, JSON.stringify({ ok: true, home: HOME }), {
       "Content-Type": "application/json; charset=utf-8",
-      "Set-Cookie": cookie(token, Math.floor(SESSION_MS / 1000)),
+      "Set-Cookie": cookie(req, token, Math.floor(SESSION_MS / 1000)),
     });
     return;
   }
@@ -1308,7 +1320,7 @@ const server = createServer(async (req, res) => {
   if (path === `${base}/logout` && req.method === "POST") {
     const token = readCookie(req, "dg_session");
     if (token) sessions.delete(token);
-    send(res, 204, "", { "Set-Cookie": cookie("", 0) });
+    send(res, 204, "", { "Set-Cookie": cookie(req, "", 0) });
     return;
   }
 
