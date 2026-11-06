@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, readFileSync } from "node:fs";
-import { cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -14,11 +14,10 @@ import { WebSocketServer } from "ws";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = join(__dirname, "public");
 // UI baru (React, hasil `npm run build` di web/); selama transisi disajikan di BASE/v2/.
 const WEB_DIST = resolve(process.env.WEB_DIST || join(__dirname, "web", "dist"));
-// Subdomain khusus dashboard: UI baru di root "/", sedangkan BASE/... (API, WebSocket, UI lama) tetap
-// dilayani apa adanya supaya sesi login dan terminal sama dengan akses lewat domain utama.
+// Subdomain khusus dashboard: UI di root "/", sedangkan BASE/... (API, WebSocket) tetap
+// dilayani apa adanya, jadi UI memakai API yang sama dengan akses lokal (BASE/v2/).
 const DASHBOARD_HOST = (process.env.DASHBOARD_HOST || "dashboard.gitgitmiko.my.id").toLowerCase();
 // Host publik lain (mis. gitgitmiko.my.id/agen lewat tunnel) tidak dilindungi Cloudflare Access, jadi hanya
 // melayani link preview publik dan mengalihkan sisanya ke DASHBOARD_HOST. PUBLIC_HOST_LOCKDOWN=0 mematikannya.
@@ -1248,9 +1247,9 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Di subdomain, UI baru ada di "/": BASE sendiri dialihkan ke sana, UI lama tetap ada di BASE/legacy.
-  if (isDashboardHost(req) && path === base && req.method === "GET") {
-    res.writeHead(302, { Location: "/", "Cache-Control": "no-store" });
+  // BASE (dan alamat UI lama BASE/legacy) dialihkan ke UI: "/" di subdomain, BASE/v2/ di akses lokal.
+  if ((path === base || path === `${base}/legacy`) && req.method === "GET") {
+    res.writeHead(302, { Location: isDashboardHost(req) ? "/" : `${base}/v2/`, "Cache-Control": "no-store" });
     res.end();
     return;
   }
@@ -1292,20 +1291,6 @@ const server = createServer(async (req, res) => {
       res.end();
       return;
     }
-    createReadStream(file).pipe(res);
-    return;
-  }
-
-  if ((path === base || path === `${base}/legacy`) && req.method === "GET") {
-    const file = join(PUBLIC_DIR, "index.html");
-    if (!existsSync(file)) {
-      send(res, 500, "Halaman tidak ada");
-      return;
-    }
-    res.writeHead(200, {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    });
     createReadStream(file).pipe(res);
     return;
   }
@@ -1558,17 +1543,6 @@ const server = createServer(async (req, res) => {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
-  }
-
-  if (path.startsWith(`${base}/`)) {
-    const rel = path.slice(base.length + 1);
-    const file = join(PUBLIC_DIR, rel);
-    if (rel && existsSync(file) && file.startsWith(PUBLIC_DIR)) {
-      const type = rel.endsWith(".css") ? "text/css" : rel.endsWith(".js") ? "text/javascript" : "application/octet-stream";
-      const data = await readFile(file);
-      send(res, 200, data, { "Content-Type": `${type}; charset=utf-8` });
-      return;
-    }
   }
 
   send(res, 404, "Tidak ditemukan");
