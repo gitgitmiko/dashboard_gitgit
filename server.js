@@ -16,7 +16,7 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
 // UI baru (React, hasil `npm run build` di web/); selama transisi disajikan di BASE/v2/.
-const WEB_DIST = join(__dirname, "web", "dist");
+const WEB_DIST = resolve(process.env.WEB_DIST || join(__dirname, "web", "dist"));
 // Subdomain khusus dashboard: UI baru di root "/", sedangkan BASE/... (API, WebSocket, UI lama) tetap
 // dilayani apa adanya supaya sesi login dan terminal sama dengan akses lewat domain utama.
 const DASHBOARD_HOST = (process.env.DASHBOARD_HOST || "dashboard.gitgitmiko.my.id").toLowerCase();

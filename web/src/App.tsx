@@ -3,15 +3,17 @@ import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { Login } from "@/components/login";
 import { Shell } from "@/components/shell";
 import { api, BASE, setUnauthorizedHandler } from "@/lib/api";
+import { DialogsProvider } from "@/lib/dialogs";
 import { SessionContext } from "@/lib/session";
 import { tabFromHash, type TabId } from "@/nav";
 import { Legacy } from "@/pages/legacy";
+import { Files } from "@/pages/files";
 import { Overview } from "@/pages/overview";
 
 // Tab yang belum dipindah ke UI baru diarahkan ke UI lama (lihat pages/legacy.tsx).
 const PAGES: Record<TabId, ComponentType<{ tab: TabId }>> = {
   overview: Overview,
-  files: Legacy,
+  files: Files,
   terminal: Legacy,
   logs: Legacy,
   cctv: Legacy,
@@ -68,6 +70,7 @@ export default function App() {
 
   return (
     <SessionContext.Provider value={{ home, logout }}>
+      <DialogsProvider>
       <Shell tab={tab}>
         {[...visited].map((id) => {
           const Page = PAGES[id];
@@ -78,6 +81,7 @@ export default function App() {
           );
         })}
       </Shell>
+      </DialogsProvider>
     </SessionContext.Provider>
   );
 }
