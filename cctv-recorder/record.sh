@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rekam CCTV (ONVIF/RTSP) per jam ke /mnt/cctv/YYYY-MM-DD/HH-00-00.mp4
+# Rekam CCTV (ONVIF/RTSP) per jam ke /mnt/cctv/YYYY-MM-DD/HH-MM-SS.mp4 (biasanya HH-00-00)
 # ffmpeg -c copy (tanpa re-encode) dengan -f segment supaya file dipotong tepat tiap jam.
 # Dipanggil ulang otomatis oleh systemd (Restart=always) kalau kamera/stream putus.
 set -uo pipefail
@@ -40,13 +40,17 @@ log "mulai rekam -> $REC_DIR"
 # awal dan ditulis per-fragmen, jadi rekaman jam yang SEDANG berjalan tetap bisa
 # diputar/diunduh (tidak perlu menunggu jam itu selesai), dan tahan terhadap
 # crash/restart di tengah jalan (fragmen yang sudah ditulis tetap valid).
+#
+# Nama berkas memakai menit+detik (%H-%M-%S), bukan "%H-00-00": kalau perekam
+# di-restart di tengah jam, ffmpeg membuat berkas baru (mis. 06-38-10.mp4)
+# alih-alih MENIMPA berkas jam itu dan menghapus rekaman sebelumnya.
 ffmpeg -nostdin -loglevel warning \
   -rtsp_transport tcp -timeout 10000000 \
   -i "$RTSP_URL" \
   -c:v copy -c:a aac -b:a 64k \
   -f segment -segment_time 3600 -segment_atclocktime 1 -reset_timestamps 1 \
   -segment_format mp4 -segment_format_options "movflags=+frag_keyframe+empty_moov+default_base_moof" \
-  -strftime 1 "$REC_DIR/%Y-%m-%d/%H-00-00.mp4" \
+  -strftime 1 "$REC_DIR/%Y-%m-%d/%H-%M-%S.mp4" \
   >> "$LOG" 2>&1 &
 pid=$!
 
