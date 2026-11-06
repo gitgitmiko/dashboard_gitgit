@@ -70,7 +70,7 @@ function Metric({
         </div>
         <div className="flex items-end justify-between gap-2">
           <span className="tabular text-2xl font-semibold tracking-tight">{value}</span>
-          {history && <Sparkline values={history} className={cn("h-8 w-24 shrink-0", toneText[level(percent ?? 0)])} />}
+          {history && <Sparkline values={history} className={cn("h-8 w-12 shrink sm:w-24", toneText[level(percent ?? 0)])} />}
         </div>
         {percent !== undefined && <Progress value={percent} />}
         <p className="truncate text-xs text-muted-foreground" title={typeof detail === "string" ? detail : undefined}>
@@ -196,7 +196,7 @@ function AddressesCard() {
                 href={`https://${d.hostname}${d.path}`}
                 target="_blank"
                 rel="noopener"
-                className="group flex flex-col gap-2 rounded-lg border bg-background/40 p-4 transition-colors hover:border-primary/40 hover:bg-accent/40"
+                className="group flex min-w-0 flex-col gap-2 rounded-lg border bg-background/40 p-4 transition-colors hover:border-primary/40 hover:bg-accent/40"
               >
                 <div className="flex items-center gap-2">
                   <Globe className="size-4 shrink-0 text-primary" />
@@ -439,7 +439,7 @@ export function Overview() {
                 </div>
               ))}
             {!!vethCount && (
-              <Button variant="ghost" size="sm" className="self-start text-muted-foreground" onClick={() => setShowVeth((v) => !v)}>
+              <Button variant="ghost" size="sm" className="h-auto self-start py-1.5 text-left whitespace-normal text-muted-foreground" onClick={() => setShowVeth((v) => !v)}>
                 {showVeth ? "Sembunyikan" : "Tampilkan"} {vethCount} antarmuka virtual Docker (veth)
               </Button>
             )}

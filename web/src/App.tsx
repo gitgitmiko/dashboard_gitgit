@@ -6,25 +6,26 @@ import { api, BASE, setUnauthorizedHandler } from "@/lib/api";
 import { DialogsProvider } from "@/lib/dialogs";
 import { SessionContext } from "@/lib/session";
 import { tabFromHash, type TabId } from "@/nav";
-import { Legacy } from "@/pages/legacy";
 import { Cctv } from "@/pages/cctv";
 import { Files } from "@/pages/files";
 import { Logs } from "@/pages/logs";
+import { Sosmed } from "@/pages/sosmed";
+import { Whatif } from "@/pages/whatif";
+import { Youtube } from "@/pages/youtube";
 import { Overview } from "@/pages/overview";
 
 // xterm cukup besar, jadi kode terminal baru diunduh saat tab Terminal pertama kali dibuka.
 const TerminalPage = lazy(() => import("@/pages/terminal").then((m) => ({ default: m.TerminalPage })));
 
-// Tab yang belum dipindah ke UI baru diarahkan ke UI lama (lihat pages/legacy.tsx).
 const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   overview: Overview,
   files: Files,
   terminal: TerminalPage,
   logs: Logs,
   cctv: Cctv,
-  sosmed: Legacy,
-  youtube: Legacy,
-  whatif: Legacy,
+  sosmed: Sosmed,
+  youtube: Youtube,
+  whatif: Whatif,
 };
 
 export default function App() {

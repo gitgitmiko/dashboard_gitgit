@@ -13,7 +13,7 @@ HOST=127.0.0.1 PORT=4180 BASE_PATH=/agen node server.js
 
 ### UI baru (React) — masa transisi
 
-UI baru dibangun dengan Vite + React + TypeScript + Tailwind + shadcn/ui di folder `web/` dan disajikan di **`https://dashboard.gitgitmiko.my.id/`** (juga di `https://gitgitmiko.my.id/agen/v2/`). Tab yang belum dipindah menautkan ke UI lama di `/agen/`.
+UI baru dibangun dengan Vite + React + TypeScript + Tailwind + shadcn/ui di folder `web/` dan disajikan di **`https://dashboard.gitgitmiko.my.id/`** (juga di `https://gitgitmiko.my.id/agen/v2/`). Semua tab sudah tersedia di UI baru; UI lama di `/agen/` masih bisa dipakai selama masa transisi.
 
 Subdomain dilayani proses yang sama (port 4180, lewat Cloudflare Tunnel). Untuk host `DASHBOARD_HOST` (default `dashboard.gitgitmiko.my.id`), path di luar `/agen` dipetakan ke UI baru, sedangkan `/agen/...` (API, WebSocket terminal, UI lama) dilayani apa adanya. Cookie sesi di host itu memakai `Path=/`.
 

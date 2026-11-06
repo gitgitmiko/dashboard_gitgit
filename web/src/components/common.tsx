@@ -14,7 +14,7 @@ export function StatCard({ label, value, detail, loading }: { label: ReactNode; 
     <Card className="gap-2 py-4">
       <CardContent className="flex min-w-0 flex-col gap-1.5 px-4">
         <span className="truncate text-sm text-muted-foreground">{label}</span>
-        {loading ? <Skeleton className="h-7 w-20" /> : <span className="tabular truncate text-2xl font-semibold tracking-tight">{value}</span>}
+        {loading ? <Skeleton className="h-7 w-20" /> : <span className="tabular truncate text-xl font-semibold tracking-tight sm:text-2xl">{value}</span>}
         {detail !== undefined && <span className="truncate text-xs text-muted-foreground">{loading ? <Skeleton className="h-3 w-28" /> : detail || " "}</span>}
       </CardContent>
     </Card>
