@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState, type ComponentType } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ComponentType } from "react";
 import { Login } from "@/components/login";
 import { Shell } from "@/components/shell";
 import { api, BASE, setUnauthorizedHandler } from "@/lib/api";
@@ -10,11 +10,14 @@ import { Legacy } from "@/pages/legacy";
 import { Files } from "@/pages/files";
 import { Overview } from "@/pages/overview";
 
+// xterm cukup besar, jadi kode terminal baru diunduh saat tab Terminal pertama kali dibuka.
+const TerminalPage = lazy(() => import("@/pages/terminal").then((m) => ({ default: m.TerminalPage })));
+
 // Tab yang belum dipindah ke UI baru diarahkan ke UI lama (lihat pages/legacy.tsx).
-const PAGES: Record<TabId, ComponentType<{ tab: TabId }>> = {
+const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   overview: Overview,
   files: Files,
-  terminal: Legacy,
+  terminal: TerminalPage,
   logs: Legacy,
   cctv: Legacy,
   sosmed: Legacy,
@@ -76,7 +79,9 @@ export default function App() {
           const Page = PAGES[id];
           return (
             <div key={id} hidden={id !== tab}>
-              <Page tab={id} />
+              <Suspense fallback={<div className="h-80 animate-pulse rounded-xl border bg-card" />}>
+                <Page tab={id} active={id === tab} />
+              </Suspense>
             </div>
           );
         })}

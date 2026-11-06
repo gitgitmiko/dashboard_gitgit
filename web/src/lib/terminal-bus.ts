@@ -14,10 +14,6 @@ export function takePendingCd() {
   return p;
 }
 
-export function peekPendingCd() {
-  return pendingCd;
-}
-
 export function onPendingCd(fn: () => void) {
   listeners.add(fn);
   return () => {
