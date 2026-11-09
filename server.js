@@ -11,6 +11,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
+import { collectCleanup, killCleanup } from "./cleanup.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,8 @@ const DASHBOARD_HOST = (process.env.DASHBOARD_HOST || "dashboard.gitgitmiko.my.i
 // melayani link preview publik dan mengalihkan sisanya ke DASHBOARD_HOST. PUBLIC_HOST_LOCKDOWN=0 mematikannya.
 const PUBLIC_HOST_LOCKDOWN = process.env.PUBLIC_HOST_LOCKDOWN !== "0";
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+// Proses yatim yang lebih muda dari ini tidak ditawarkan untuk dibersihkan (mungkin sengaja baru dijalankan).
+const CLEANUP_MIN_AGE_SEC = Number(process.env.CLEANUP_MIN_AGE_SEC ?? 1800);
 const STATIC_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -1393,6 +1396,38 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...(await collectAddresses()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/cleanup` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await collectCleanup({ serverPid: process.pid, ptyBridge: PTY_BRIDGE, minAgeSec: CLEANUP_MIN_AGE_SEC })) });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/cleanup/kill` && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+      sendJson(res, 415, { ok: false, message: "Harus JSON" });
+      return;
+    }
+    try {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        throw httpError(400, "JSON tidak valid");
+      }
+      const targets = Array.isArray(body.targets) ? body.targets.filter((t) => Number.isInteger(t?.pid) && Number.isInteger(t?.start)).slice(0, 50) : [];
+      if (!targets.length) throw httpError(400, "Tidak ada proses yang dipilih");
+      sendJson(res, 200, { ok: true, ...(await killCleanup({ serverPid: process.pid, ptyBridge: PTY_BRIDGE, targets, minAgeSec: CLEANUP_MIN_AGE_SEC, logFile: join(HOME, "cron", "dashboard-cleanup.log") })) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Bot, Boxes, ChevronRight, Cpu, ExternalLink, Gauge, Globe, HardDrive, MemoryStick, Network, Plug, Router, Wifi } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { CleanupButton } from "@/components/cleanup";
 import { Sparkline } from "@/components/sparkline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -337,6 +338,10 @@ export function Overview() {
 
   return (
     <div className="flex flex-col gap-5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">{s ? `${s.hostname} · hidup ${fmtDuration(s.uptime_sec)}` : "Memuat…"}</p>
+        <CleanupButton />
+      </div>
       {error && <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error.message}</p>}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
