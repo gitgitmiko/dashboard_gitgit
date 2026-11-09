@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useAsk } from "@/lib/dialogs";
 import { shellQuote } from "@/lib/format";
-import { onPendingCd, takePendingCd } from "@/lib/terminal-bus";
+import { onPendingCd, takePendingCd, takePendingFocus } from "@/lib/terminal-bus";
 import { TermSession, type TermStatus } from "@/lib/terminal-session";
 import { cn } from "@/lib/utils";
 
@@ -74,9 +74,29 @@ export function TerminalPage({ active }: { active: boolean }) {
     };
   }, [restore]);
 
-  // Saat tab Terminal dibuka: pastikan ada terminal, dan jalankan "cd" titipan dari tab Folder.
-  const handlePending = useCallback(async () => {
+  // Ambil sesi yang dibuat di luar tab ini (mis. dari tab Remote Claude) tanpa membuat ulang yang sudah ada.
+  const sync = useCallback(async () => {
     await restore();
+    try {
+      const d = await api<{ terminals: { id: string; title: string }[] }>("/api/terminals");
+      d.terminals.forEach((t) => open(t.id, t.title));
+    } catch {
+      /* abaikan: dicoba lagi saat tab dibuka berikutnya */
+    }
+  }, [restore, open]);
+
+  // Saat tab Terminal dibuka: pastikan ada terminal, pilih terminal titipan tab Remote Claude,
+  // dan jalankan "cd" titipan dari tab Folder.
+  const handlePending = useCallback(async () => {
+    await sync();
+    const focus = takePendingFocus();
+    if (focus) {
+      const s = [...sessions.current.values()].find((x) => x.serverId === focus);
+      if (s) {
+        setCurrent(s.key);
+        return;
+      }
+    }
     const cd = takePendingCd();
     const live = [...sessions.current.values()].filter((s) => !s.isDead);
     let target = sessions.current.get(current);
@@ -86,7 +106,7 @@ export function TerminalPage({ active }: { active: boolean }) {
       target.send(`cd ${shellQuote(cd)}\n`);
       setCurrent(target.key);
     }
-  }, [restore, current, open]);
+  }, [sync, current, open]);
 
   useEffect(() => {
     if (active) handlePending();

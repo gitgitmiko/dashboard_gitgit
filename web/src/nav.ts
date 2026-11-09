@@ -1,11 +1,12 @@
-import { FolderOpen, LayoutDashboard, type LucideIcon, ScrollText, Share2, Sparkles, SquareTerminal, SquarePlay, Video } from "lucide-react";
+import { FolderOpen, LayoutDashboard, type LucideIcon, ScrollText, Share2, Smartphone, Sparkles, SquareTerminal, SquarePlay, Video } from "lucide-react";
 
-export type TabId = "overview" | "files" | "terminal" | "logs" | "cctv" | "sosmed" | "youtube" | "whatif";
+export type TabId = "overview" | "files" | "terminal" | "remote" | "logs" | "cctv" | "sosmed" | "youtube" | "whatif";
 
 export const NAV: { id: TabId; label: string; icon: LucideIcon; group: "server" | "otomasi" }[] = [
   { id: "overview", label: "Ringkasan", icon: LayoutDashboard, group: "server" },
   { id: "files", label: "Folder", icon: FolderOpen, group: "server" },
   { id: "terminal", label: "Terminal", icon: SquareTerminal, group: "server" },
+  { id: "remote", label: "Remote Claude", icon: Smartphone, group: "server" },
   { id: "logs", label: "Log", icon: ScrollText, group: "server" },
   { id: "cctv", label: "CCTV", icon: Video, group: "server" },
   { id: "sosmed", label: "Sosmed", icon: Share2, group: "otomasi" },

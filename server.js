@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { collectCleanup, killCleanup } from "./cleanup.js";
+import { remoteStatus, startRemote, stopRemote } from "./remote-claude.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -84,7 +85,9 @@ const WHATIF_API_URL = (process.env.WHATIF_API_URL || "http://172.18.0.1:8798").
 const WHATIF_API_TOKEN = process.env.WHATIF_API_TOKEN || "";
 const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
-const MAX_TERM = 8;
+const MAX_TERM = 16;
+// Folder project yang ditawarkan di tab Remote Claude (satu tombol per repo git).
+const REPOS_DIR = resolve(process.env.REMOTE_REPOS_DIR || join(HOME, "github-repos"));
 const TERM_BUFFER_MAX = 1024 * 1024;
 const sessions = new Map();
 const SESSION_MS = 12 * 60 * 60 * 1000;
@@ -738,9 +741,9 @@ function listTermSessions() {
   return [...termSessions.values()].map((session) => ({ id: session.id, title: session.title }));
 }
 
-function spawnPty() {
+function spawnPty(cwd = HOME) {
   return spawn(PYTHON, ["-u", PTY_BRIDGE], {
-    cwd: HOME,
+    cwd,
     env: {
       ...process.env,
       TERM: "xterm-256color",
@@ -749,7 +752,8 @@ function spawnPty() {
       HOME,
       SHELL: process.env.SHELL || "/bin/bash",
       USER: process.env.USER || "gitgitmiko",
-      PWD: HOME,
+      PWD: cwd,
+      PTY_CWD: cwd,
       PTY_ROWS: "24",
       PTY_COLS: "80",
     },
@@ -791,12 +795,15 @@ function destroyTermSession(id, { alreadyDead } = {}) {
   }
 }
 
-function createTermSession() {
+// opts: { cwd, title, repo, input } — dipakai tab Remote Claude untuk membuka shell di root project
+// dan langsung mengetikkan perintah awal (sama seperti mengetik manual di terminal baru).
+function createTermSession(opts = {}) {
   const id = randomBytes(8).toString("hex");
-  const child = spawnPty();
+  const child = spawnPty(opts.cwd || HOME);
   const session = {
     id,
-    title: `Terminal ${++termSeq}`,
+    title: opts.title || `Terminal ${++termSeq}`,
+    repo: opts.repo || null,
     child,
     buffer: { chunks: [], size: 0 },
     clients: new Set(),
@@ -818,6 +825,7 @@ function createTermSession() {
     destroyTermSession(id, { alreadyDead: true });
   });
   termSessions.set(id, session);
+  if (opts.input && child.stdin.writable) child.stdin.write(opts.input);
   return session;
 }
 
@@ -1396,6 +1404,42 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...(await collectAddresses()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/remote-claude` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, maxTerm: MAX_TERM, terminals: termSessions.size, ...(await remoteStatus({ reposDir: REPOS_DIR, termSessions })) });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  const remoteAction = /^\/api\/remote-claude\/(start|stop)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && remoteAction && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+      sendJson(res, 415, { ok: false, message: "Harus JSON" });
+      return;
+    }
+    try {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        throw httpError(400, "JSON tidak valid");
+      }
+      const repoName = String(body.repo || "");
+      const result =
+        remoteAction[1] === "start"
+          ? await startRemote({ reposDir: REPOS_DIR, termSessions, createTermSession, maxTerm: MAX_TERM, repoName })
+          : await stopRemote({ reposDir: REPOS_DIR, termSessions, destroyTermSession, repoName });
+      sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }
