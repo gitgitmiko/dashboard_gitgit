@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useSession } from "@/lib/session";
 import { useStats } from "@/lib/stats";
 import { cn } from "@/lib/utils";
-import { NAV, type TabId } from "@/nav";
+import { NAV, NAV_GROUPS, type TabId } from "@/nav";
 
 function useTheme() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
@@ -23,9 +23,9 @@ function useTheme() {
 function NavList({ tab, onPick }: { tab: TabId; onPick?: () => void }) {
   return (
     <nav className="flex flex-col gap-5">
-      {(["server", "otomasi"] as const).map((group) => (
+      {NAV_GROUPS.map(({ id: group, label: groupLabel }) => (
         <div key={group}>
-          <p className="mb-1.5 px-3 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">{group === "server" ? "Server" : "Otomasi"}</p>
+          <p className="mb-1.5 px-3 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">{groupLabel}</p>
           <div className="flex flex-col gap-0.5">
             {NAV.filter((n) => n.group === group).map(({ id, label, icon: Icon }) => (
               <a

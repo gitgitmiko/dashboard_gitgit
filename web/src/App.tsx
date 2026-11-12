@@ -14,6 +14,7 @@ import { Whatif } from "@/pages/whatif";
 import { Youtube } from "@/pages/youtube";
 import { Overview } from "@/pages/overview";
 import { RemoteClaude } from "@/pages/remote-claude";
+import { Apps } from "@/pages/apps";
 
 // xterm cukup besar, jadi kode terminal baru diunduh saat tab Terminal pertama kali dibuka.
 const TerminalPage = lazy(() => import("@/pages/terminal").then((m) => ({ default: m.TerminalPage })));
@@ -28,6 +29,7 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   sosmed: Sosmed,
   youtube: Youtube,
   whatif: Whatif,
+  apps: Apps,
 };
 
 export default function App() {

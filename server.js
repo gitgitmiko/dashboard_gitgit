@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { collectCleanup, killCleanup } from "./cleanup.js";
 import { remoteStatus, startRemote, stopRemote } from "./remote-claude.js";
+import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1437,6 +1438,56 @@ const server = createServer(async (req, res) => {
         remoteAction[1] === "start"
           ? await startRemote({ reposDir: REPOS_DIR, termSessions, createTermSession, maxTerm: MAX_TERM, repoName })
           : await stopRemote({ reposDir: REPOS_DIR, termSessions, destroyTermSession, repoName });
+      sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/apps` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, apps: await appsStatus() });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  const appIconMatch = /^\/api\/apps\/([a-z0-9-]+)\/icon$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && appIconMatch && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      send(res, 200, await appIcon(appIconMatch[1]), { "Content-Type": "image/png" });
+    } catch (err) {
+      sendJson(res, err.status || 404, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  // POST /api/apps/:id/draft · POST /api/apps/:id/announcements · POST /api/apps/:id/announcements/delete
+  const appAction = /^\/api\/apps\/([a-z0-9-]+)\/(draft|announcements|announcements\/delete)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && appAction && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+      sendJson(res, 415, { ok: false, message: "Harus JSON" });
+      return;
+    }
+    try {
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || "{}");
+      } catch {
+        throw httpError(400, "JSON tidak valid");
+      }
+      const [, appId, action] = appAction;
+      const result =
+        action === "draft"
+          ? { draft: await draftAnnouncement(appId) }
+          : action === "announcements"
+            ? { announcement: await postAnnouncement(appId, body) }
+            : await deleteAnnouncement(appId, body.id);
       sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
