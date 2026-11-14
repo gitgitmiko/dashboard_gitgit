@@ -36,7 +36,7 @@ type Overview = {
 };
 type History = { runs: Run[]; total: number; page: number; totalPages: number };
 
-const SLOT: Record<string, string> = { siang: "Siang", sore: "Sore" };
+const SLOT: Record<string, string> = { pagi: "Pagi", siang: "Siang", sore: "Sore", malam: "Malam", sample: "Sampel" };
 const logTone = (l: string) => (/failed|error|gagal/i.test(l) ? "err" : /rendered|uploaded|started/.test(l) ? "ok" : "");
 const videoLen = (s?: number | null) => (s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "");
 
