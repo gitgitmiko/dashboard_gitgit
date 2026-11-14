@@ -1,6 +1,6 @@
-import { FolderOpen, Gamepad2, LayoutDashboard, type LucideIcon, ScrollText, Share2, Smartphone, Sparkles, SquareTerminal, SquarePlay, Video } from "lucide-react";
+import { FolderOpen, Gamepad2, LayoutDashboard, type LucideIcon, ScrollText, Share2, Smartphone, SquareTerminal, Video } from "lucide-react";
 
-export type TabId = "overview" | "files" | "terminal" | "remote" | "logs" | "cctv" | "sosmed" | "youtube" | "whatif" | "apps";
+export type TabId = "overview" | "files" | "terminal" | "remote" | "logs" | "cctv" | "sosmed" | "apps";
 
 export type NavGroup = "server" | "otomasi" | "produk";
 
@@ -18,8 +18,6 @@ export const NAV: { id: TabId; label: string; icon: LucideIcon; group: NavGroup 
   { id: "logs", label: "Log", icon: ScrollText, group: "server" },
   { id: "cctv", label: "CCTV", icon: Video, group: "server" },
   { id: "sosmed", label: "Sosmed", icon: Share2, group: "otomasi" },
-  { id: "youtube", label: "YouTube", icon: SquarePlay, group: "otomasi" },
-  { id: "whatif", label: "What If", icon: Sparkles, group: "otomasi" },
   { id: "apps", label: "Apps and Games", icon: Gamepad2, group: "produk" },
 ];
 

@@ -10,8 +10,6 @@ import { Cctv } from "@/pages/cctv";
 import { Files } from "@/pages/files";
 import { Logs } from "@/pages/logs";
 import { Sosmed } from "@/pages/sosmed";
-import { Whatif } from "@/pages/whatif";
-import { Youtube } from "@/pages/youtube";
 import { Overview } from "@/pages/overview";
 import { RemoteClaude } from "@/pages/remote-claude";
 import { Apps } from "@/pages/apps";
@@ -27,8 +25,6 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   logs: Logs,
   cctv: Cctv,
   sosmed: Sosmed,
-  youtube: Youtube,
-  whatif: Whatif,
   apps: Apps,
 };
 

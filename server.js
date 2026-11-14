@@ -78,9 +78,6 @@ const CCTV_DIR = resolve(process.env.CCTV_REC_DIR || "/mnt/cctv");
 // API konten sosmed milik scraper-data-gitgit (hanya bisa dijangkau dari host); dibaca read-only.
 const SOCIAL_API_URL = (process.env.SOCIAL_API_URL || "http://172.18.0.1:8791").replace(/\/+$/, "");
 const SOCIAL_API_KEY = process.env.SOCIAL_API_KEY || "";
-// API monitoring KUISABON (youtube_short_automation, service kuisabon); dibaca read-only.
-const KUISABON_API_URL = (process.env.KUISABON_API_URL || "http://172.18.0.1:8797").replace(/\/+$/, "");
-const KUISABON_API_TOKEN = process.env.KUISABON_API_TOKEN || "";
 // API monitoring "Apa yang terjadi jika" (whatif-automation, service whatif); dibaca read-only.
 const WHATIF_API_URL = (process.env.WHATIF_API_URL || "http://172.18.0.1:8798").replace(/\/+$/, "");
 const WHATIF_API_TOKEN = process.env.WHATIF_API_TOKEN || "";
@@ -1048,7 +1045,7 @@ function readFreeUsage() {
 async function fetchSocial(endpoint, params) {
   if (!SOCIAL_API_KEY) throw httpError(503, "SOCIAL_API_KEY belum di-set di .env dashboard");
   const qs = new URLSearchParams();
-  for (const key of ["account", "status", "date", "page", "pageSize"]) {
+  for (const key of ["account", "platform", "status", "date", "page", "pageSize"]) {
     const v = params.get(key);
     if (v) qs.set(key, v);
   }
@@ -1063,27 +1060,6 @@ async function fetchSocial(endpoint, params) {
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw httpError(res.status, data.error || `API sosmed error ${res.status}`);
-  return data;
-}
-
-async function fetchKuisabon(endpoint, params) {
-  if (!KUISABON_API_TOKEN) throw httpError(503, "KUISABON_API_TOKEN belum di-set di .env dashboard");
-  const qs = new URLSearchParams();
-  for (const key of ["status", "topic", "date", "page", "pageSize", "lines"]) {
-    const v = params.get(key);
-    if (v) qs.set(key, v);
-  }
-  let res;
-  try {
-    res = await fetch(`${KUISABON_API_URL}/api/monitor/${endpoint}${qs.size ? `?${qs}` : ""}`, {
-      headers: { "X-Token": KUISABON_API_TOKEN },
-      signal: AbortSignal.timeout(10000),
-    });
-  } catch {
-    throw httpError(502, "API KUISABON tidak bisa dihubungi (service kuisabon mati?)");
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw httpError(res.status, data.error || `API KUISABON error ${res.status}`);
   return data;
 }
 
@@ -1551,17 +1527,6 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       sendJson(res, 200, { ok: true, ...(await fetchSocial(path.endsWith("/overview") ? "/overview" : "/posts", url.searchParams)) });
-    } catch (err) {
-      sendJson(res, err.status || 502, { ok: false, message: err.message });
-    }
-    return;
-  }
-
-  const ytMatch = /^\/api\/youtube\/(overview|history|logs)$/.exec(path.slice(base.length));
-  if (path.startsWith(base) && ytMatch && req.method === "GET") {
-    if (!requireAuth(req, res)) return;
-    try {
-      sendJson(res, 200, { ok: true, ...(await fetchKuisabon(ytMatch[1], url.searchParams)) });
     } catch (err) {
       sendJson(res, err.status || 502, { ok: false, message: err.message });
     }
