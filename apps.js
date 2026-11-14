@@ -1,4 +1,4 @@
-// Tab "Apps and Games": status aplikasi milik sendiri dan kartu Info developer (Firestore announcements/).
+// Tab "Apps and Games": daftar aplikasi/game milik sendiri (versi, status Play) dan kartu Info developer (Firestore announcements/).
 // Draf kartu ditulis Claude CLI dari commit sejak kartu terakhir; posting memakai login firebase-tools di server.
 import { execFile, spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -14,26 +14,114 @@ const FIREBASE_CLIENT_ID = "563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.g
 const FIREBASE_CLIENT_SECRET = "j9iVZfS8kkCEFUPaAeJV0sAi";
 const TYPES = new Set(["update", "bugfix", "info"]);
 
+// playTrack diisi manual: status Play Console tidak tercatat di repo dan butuh akun layanan
+// Google Play Developer API untuk dibaca. "closed" = uji tertutup, "none" = belum di Play, "private" = tidak untuk dipublikasikan.
 export const APPS = [
   {
     id: "valoid",
     name: "Valoid Hub",
+    kind: "app",
     platform: "Android · Google Play",
     packageName: "com.valoid.mobile",
     repo: join(HOME, "github-repos/valoid-mobile"),
     gradle: "app/build.gradle.kts",
     icon: "docs/icon/valoid-icon-playstore-512.png",
     firebaseProject: "valoid-d04fc",
+    playTrack: "closed",
+  },
+  {
+    id: "dumpling-witch",
+    name: "Dumpling Witch",
+    kind: "game",
+    platform: "Android · Unity",
+    packageName: "com.gitgitmiko.dumplingwitch",
+    repo: join(HOME, "github-repos/slime-breaker"),
+    unity: "ProjectSettings/ProjectSettings.asset",
+    icon: "asset_work/store/icon_512.png",
+    playTrack: "closed",
+  },
+  {
+    id: "weeboonime",
+    name: "Weeboonime",
+    kind: "app",
+    platform: "Android · HP",
+    packageName: "com.webunime.mobile",
+    repo: join(HOME, "github-repos/app_webunime_mobile"),
+    gradle: "app/build.gradle.kts",
+    icon: "app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+    playTrack: "none",
+  },
+  {
+    id: "weeboonime-tv",
+    name: "WeebooNime TV",
+    kind: "app",
+    platform: "Android TV",
+    packageName: "com.webunime.tv",
+    repo: join(HOME, "github-repos/app_webunime"),
+    gradle: "app/build.gradle.kts",
+    icon: "app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+    playTrack: "none",
+  },
+  {
+    id: "xb-market",
+    name: "XB Market",
+    kind: "app",
+    platform: "Android",
+    packageName: "com.xbmarket.mobile",
+    repo: join(HOME, "github-repos/xb-market-mobile"),
+    gradle: "app/build.gradle.kts",
+    playTrack: "none",
+  },
+  {
+    id: "vpn-mobile",
+    name: "VPN Mobile",
+    kind: "app",
+    platform: "Android",
+    packageName: "com.vpnmobile.app",
+    repo: join(HOME, "github-repos/vpn-mobile"),
+    gradle: "app/build.gradle.kts",
+    playTrack: "none",
+  },
+  {
+    id: "fakegps",
+    name: "Fake GPS",
+    kind: "app",
+    platform: "Android",
+    packageName: "com.fakegps.app",
+    repo: join(HOME, "github-repos/fakegps-mobile"),
+    gradle: "app/build.gradle.kts",
+    playTrack: "none",
+  },
+  {
+    id: "aether-vanguard",
+    name: "Aether Vanguard",
+    kind: "game",
+    platform: "Android · Unity",
+    packageName: "com.gitgit.aethervanguard",
+    repo: join(HOME, "github-repos/project-rpg-game"),
+    unity: "game/ProjectSettings/ProjectSettings.asset",
+    playTrack: "none",
+  },
+  {
+    id: "guardian-soul",
+    name: "Guardian Soul Offline",
+    kind: "game",
+    platform: "Android · Unity",
+    packageName: "com.gitgit.guardiansoul.offline",
+    repo: join(HOME, "github-repos/guardian-mobile"),
+    unity: "ProjectSettings/ProjectSettings.asset",
+    playTrack: "private",
   },
 ];
 
-function appById(id) {
-  const app = APPS.find((a) => a.id === id);
-  if (!app) throw Object.assign(new Error("Aplikasi tidak dikenal"), { status: 404 });
-  return app;
-}
-
 async function readVersion(app) {
+  if (app.unity) {
+    const text = await readFile(join(app.repo, app.unity), "utf8");
+    return {
+      versionName: /^\s*bundleVersion:\s*(\S+)/m.exec(text)?.[1] ?? null,
+      versionCode: Number(/AndroidBundleVersionCode:\s*(\d+)/.exec(text)?.[1]) || null,
+    };
+  }
   const text = await readFile(join(app.repo, app.gradle), "utf8");
   return {
     versionName: /versionName\s*=\s*"([^"]+)"/.exec(text)?.[1] ?? null,
@@ -112,30 +200,56 @@ async function commitsSince(app, sinceIso) {
     });
 }
 
+function appById(id) {
+  const app = APPS.find((a) => a.id === id);
+  if (!app) throw Object.assign(new Error("Aplikasi tidak dikenal"), { status: 404 });
+  return app;
+}
+
+async function lastCommit(app) {
+  try {
+    const { stdout } = await run("git", ["-C", app.repo, "log", "-1", `--pretty=format:%h${SEP}%cI${SEP}%s`]);
+    const [hash, date, subject] = stdout.split(SEP);
+    return hash ? { hash, date, subject } : null;
+  } catch {
+    return null; // repo lokal tanpa git
+  }
+}
+
+async function appStatus(app) {
+  const base = {
+    id: app.id,
+    name: app.name,
+    kind: app.kind,
+    platform: app.platform,
+    packageName: app.packageName,
+    repo: app.repo.replace(HOME, "~"),
+    playTrack: app.playTrack,
+    hasIcon: Boolean(app.icon),
+    hasAnnouncements: Boolean(app.firebaseProject),
+  };
+  const [version, last] = await Promise.all([readVersion(app).catch(() => ({ versionName: null, versionCode: null })), lastCommit(app)]);
+  if (!app.firebaseProject) return { ...base, ...version, lastCommit: last };
+  const announcements = await listAnnouncements(app).catch((e) => ({ error: e.message }));
+  const list = Array.isArray(announcements) ? announcements : [];
+  return {
+    ...base,
+    ...version,
+    lastCommit: last,
+    announcements: list,
+    announcementsError: Array.isArray(announcements) ? null : announcements.error,
+    lastAnnouncement: list[0] || null,
+    commits: await commitsSince(app, list[0]?.publishedAt),
+  };
+}
+
 export async function appsStatus() {
-  return Promise.all(
-    APPS.map(async (app) => {
-      const [version, announcements] = await Promise.all([readVersion(app), listAnnouncements(app).catch((e) => ({ error: e.message }))]);
-      const list = Array.isArray(announcements) ? announcements : [];
-      const last = list[0] || null;
-      const commits = await commitsSince(app, last?.publishedAt);
-      return {
-        id: app.id,
-        name: app.name,
-        platform: app.platform,
-        packageName: app.packageName,
-        ...version,
-        announcements: list,
-        announcementsError: Array.isArray(announcements) ? null : announcements.error,
-        lastAnnouncement: last,
-        commits,
-      };
-    }),
-  );
+  return Promise.all(APPS.map(appStatus));
 }
 
 export async function appIcon(id) {
   const app = appById(id);
+  if (!app.icon) throw Object.assign(new Error("Ikon tidak ada"), { status: 404 });
   return readFile(join(app.repo, app.icon));
 }
 
@@ -182,8 +296,14 @@ function fallbackDraft(app, version, commits) {
   };
 }
 
-export async function draftAnnouncement(id) {
+function announcementApp(id) {
   const app = appById(id);
+  if (!app.firebaseProject) throw Object.assign(new Error("Aplikasi ini belum punya Info developer"), { status: 400 });
+  return app;
+}
+
+export async function draftAnnouncement(id) {
+  const app = announcementApp(id);
   const [version, announcements] = await Promise.all([readVersion(app), listAnnouncements(app)]);
   const last = announcements[0];
   const commits = await commitsSince(app, last?.publishedAt);
@@ -218,7 +338,7 @@ ${log}`;
 // ---------- Posting / hapus ----------
 
 export async function postAnnouncement(id, input) {
-  const app = appById(id);
+  const app = announcementApp(id);
   const title = String(input.title || "").trim();
   const body = String(input.body || "").trim();
   const type = TYPES.has(input.type) ? input.type : "info";
@@ -236,7 +356,7 @@ export async function postAnnouncement(id, input) {
 }
 
 export async function deleteAnnouncement(id, docId) {
-  const app = appById(id);
+  const app = announcementApp(id);
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(docId))) throw Object.assign(new Error("ID tidak valid"), { status: 400 });
   await firestore(app, "DELETE", `/${docId}`);
   return { deleted: docId };
