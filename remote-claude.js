@@ -10,7 +10,8 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 
 const MY_UID = process.getuid();
-const LINK_RE = /https:\/\/claude\.ai\/code\?environment=[\w-]+/g;
+// Sesi baru menampilkan link environment; mode --continue menampilkan link sesi yang disambung.
+const LINK_RE = /https:\/\/claude\.ai\/code(?:\?environment=[\w-]+|\/session_\w+)/g;
 const CAPACITY_RE = /Capacity:\s*(\d+)\s*\/\s*(\d+)/g;
 // Perintah yang diketik di terminal; bisa diganti lewat env (dipakai pengujian dengan claude tiruan).
 const REMOTE_CMD = process.env.REMOTE_CLAUDE_CMD || "claude remote-control";
@@ -18,8 +19,6 @@ const REMOTE_CMD = process.env.REMOTE_CLAUDE_CMD || "claude remote-control";
 // restart API tidak ikut membunuh sesinya. Terminal web hanya menjadi klien `tmux attach`.
 const TMUX_SOCKET = process.env.REMOTE_TMUX_SOCKET || "dashboard-rc";
 const TMUX_PREFIX = "rc-";
-// Kalau `--continue` gagal secepat ini, artinya tidak ada sesi sebelumnya -> buat sesi baru.
-const CONTINUE_FAIL_SECS = 15;
 
 function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -129,9 +128,13 @@ function attachInput(name) {
 async function spawnTmuxRemote(repo, name) {
   const cmd = `${REMOTE_CMD} --name ${shellQuote(repo.name)}`;
   const script = [
-    "t=$SECONDS",
     `echo '[dashboard] Mencari sesi remote sebelumnya untuk ${repo.name.replace(/'/g, "")}…'`,
-    `${cmd} --continue || { [ $((SECONDS - t)) -lt ${CONTINUE_FAIL_SECS} ] && { echo '[dashboard] Tidak ada sesi sebelumnya, membuat sesi baru…'; ${cmd}; }; }`,
+    // --continue keluar dengan error kalau tidak ada sesi sebelumnya; kalau ada, sesi itu disambung dalam
+    // mode satu sesi yang keluar begitu sesinya selesai. Dua-duanya lanjut ke remote-control biasa,
+    // jadi project tetap bisa dipakai dari HP.
+    `${cmd} --continue`,
+    "echo '[dashboard] Menjalankan sesi remote baru…'",
+    cmd,
     "exec bash -l",
   ].join("\n");
   const tmuxArgs = [
