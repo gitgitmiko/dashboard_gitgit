@@ -111,8 +111,12 @@ export function RemoteClaude({ active }: { active: boolean }) {
   async function start(repo: Repo) {
     setBusy(repo.name);
     try {
-      await postJson("/api/remote-claude/start", { repo: repo.name });
-      toast.success(`Sesi remote ${repo.name} dimulai. Sebentar lagi muncul di aplikasi Claude.`);
+      const r = await postJson<{ reused?: boolean }>("/api/remote-claude/start", { repo: repo.name });
+      toast.success(
+        r?.reused
+          ? `Sesi remote ${repo.name} yang masih berjalan disambung lagi.`
+          : `Sesi remote ${repo.name} dimulai: menyambung sesi sebelumnya kalau ada, kalau tidak dibuat baru.`,
+      );
       await refetch();
     } catch (e) {
       toast.error((e as Error).message);
@@ -154,7 +158,7 @@ export function RemoteClaude({ active }: { active: boolean }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <p className="flex-1 text-sm text-muted-foreground">
           Satu klik = buka terminal di root project lalu jalankan <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">claude remote-control</code>. Sesinya bisa langsung dipakai
-          dari aplikasi Claude di HP.
+          dari aplikasi Claude di HP. Kalau project itu masih punya sesi sebelumnya, sesi itu yang disambung lagi, bukan dibuat baru. Sesi juga tetap hidup saat API di-restart.
         </p>
         <div className="flex items-center gap-2">
           <div className="relative w-full sm:w-56">

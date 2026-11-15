@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { collectCleanup, killCleanup } from "./cleanup.js";
-import { remoteStatus, startRemote, stopRemote } from "./remote-claude.js";
+import { remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 
 const execFileAsync = promisify(execFile);
@@ -1692,4 +1692,10 @@ server.on("upgrade", (req, socket, head) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Dashboard listening on http://${HOST}:${PORT}${BASE}/`);
+  // Sesi Remote Claude yang masih hidup dari sebelum restart disambungkan lagi, bukan dibuat baru.
+  if (existsSync(PTY_BRIDGE) && existsSync(PYTHON)) {
+    restoreRemoteSessions({ reposDir: REPOS_DIR, termSessions, createTermSession, maxTerm: MAX_TERM })
+      .then((names) => names.length && console.log(`Remote Claude tersambung lagi: ${names.join(", ")}`))
+      .catch((err) => console.error("Gagal memulihkan sesi Remote Claude:", err.message));
+  }
 });
