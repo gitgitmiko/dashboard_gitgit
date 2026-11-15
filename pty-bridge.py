@@ -20,7 +20,8 @@ def main():
     rows = int(os.environ.get("PTY_ROWS", "24"))
     cols = int(os.environ.get("PTY_COLS", "80"))
     shell = os.environ.get("SHELL", "/bin/bash")
-    cwd = os.environ.get("HOME", "/")
+    # PTY_CWD: folder awal shell (mis. root project untuk sesi Remote Claude); default HOME.
+    cwd = os.environ.get("PTY_CWD") or os.environ.get("HOME", "/")
     try:
         os.chdir(cwd)
     except OSError:

@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { type ComponentType, useState } from "react";
+import { Camera, type LucideIcon, SquarePlay, Users } from "lucide-react";
 import { DateFilter, ErrText, ExtLink, PostBadge, Thumb } from "@/components/automation";
 import { ErrorNote, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +9,8 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, qs } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { Whatif } from "@/pages/whatif";
 
 type Slot = {
   time: string;
@@ -44,7 +47,6 @@ type Posts = { posts: Post[]; total: number; page: number; totalPages: number };
 
 const KIND: Record<string, string> = { news: "Berita", steam_deals: "Promo Steam", recap_saham: "Rekap saham", recap_crypto: "Rekap crypto" };
 const kindLabel = (x: { label?: string; kind: string }) => x.label || KIND[x.kind] || x.kind;
-const PLATFORM: Record<string, string> = { instagram: "Instagram", facebook: "Facebook" };
 
 function AccountSchedule({ a }: { a: Account }) {
   return (
@@ -67,7 +69,7 @@ function AccountSchedule({ a }: { a: Account }) {
               <TableHead>Jam</TableHead>
               <TableHead className="hidden sm:table-cell">Konten</TableHead>
               {a.platforms.map((p) => (
-                <TableHead key={p}>{PLATFORM[p] || p}</TableHead>
+                <TableHead key={p}>Status</TableHead>
               ))}
             </TableRow>
           </TableHeader>
@@ -98,7 +100,8 @@ function AccountSchedule({ a }: { a: Account }) {
   );
 }
 
-export function Sosmed({ active }: { active: boolean }) {
+/** Posting otomatis satu platform Meta (Instagram/Facebook) dari scraper-social-api. */
+function MetaPosts({ platform, active }: { platform: string; active: boolean }) {
   const [account, setAccount] = useState("");
   const [status, setStatus] = useState("");
   const [date, setDate] = useState("");
@@ -110,10 +113,10 @@ export function Sosmed({ active }: { active: boolean }) {
   };
 
   const poll = active ? 30000 : false;
-  const ov = useQuery({ queryKey: ["sosmed-overview"], queryFn: () => api<Overview>("/api/sosmed/overview"), refetchInterval: poll });
+  const ov = useQuery({ queryKey: ["sosmed-overview", platform], queryFn: () => api<Overview>(`/api/sosmed/overview${qs({ platform })}`), refetchInterval: poll });
   const posts = useQuery({
-    queryKey: ["sosmed-posts", account, status, date, page, pageSize],
-    queryFn: () => api<Posts>(`/api/sosmed/posts${qs({ page, pageSize, account, status, date })}`),
+    queryKey: ["sosmed-posts", platform, account, status, date, page, pageSize],
+    queryFn: () => api<Posts>(`/api/sosmed/posts${qs({ page, pageSize, platform, account, status, date })}`),
     refetchInterval: poll,
     placeholderData: keepPreviousData,
   });
@@ -217,7 +220,7 @@ export function Sosmed({ active }: { active: boolean }) {
                     )}
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       <span className="tabular sm:hidden">{fmtShort(p.updated_at || p.created_at)} · </span>
-                      {kindLabel(p)} · {PLATFORM[p.platform] || p.platform}
+                      {kindLabel(p)}
                       {p.attempts > 1 && ` · percobaan ${p.attempts}`}
                       <span className="sm:hidden"> · {p.account}</span>
                     </p>
@@ -241,6 +244,54 @@ export function Sosmed({ active }: { active: boolean }) {
         </CardContent>
         {posts.data && <Pager page={posts.data.page} totalPages={posts.data.totalPages} onPage={setPage} info={` · ${posts.data.total} posting`} />}
       </Card>
+    </div>
+  );
+}
+
+type SubTab = "instagram" | "facebook" | "youtube";
+const SUBTABS: { id: SubTab; label: string; icon: LucideIcon; Page: ComponentType<{ active: boolean }> }[] = [
+  { id: "instagram", label: "Instagram", icon: Camera, Page: ({ active }) => <MetaPosts platform="instagram" active={active} /> },
+  { id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => <MetaPosts platform="facebook" active={active} /> },
+  { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Whatif },
+];
+const SUBTAB_KEY = "dg-sosmed-tab";
+
+export function Sosmed({ active }: { active: boolean }) {
+  const [sub, setSub] = useState<SubTab>(() => {
+    const saved = localStorage.getItem(SUBTAB_KEY);
+    return SUBTABS.some((t) => t.id === saved) ? (saved as SubTab) : "instagram";
+  });
+  // Sama seperti tab utama: sub-tab yang pernah dibuka tetap ter-mount supaya filter/halamannya awet.
+  const [visited, setVisited] = useState<Set<SubTab>>(() => new Set([sub]));
+  const pick = (id: SubTab) => {
+    setSub(id);
+    setVisited((v) => (v.has(id) ? v : new Set(v).add(id)));
+    localStorage.setItem(SUBTAB_KEY, id);
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div role="tablist" className="inline-flex w-fit gap-1 rounded-lg border bg-card p-1">
+        {SUBTABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={sub === t.id}
+            onClick={() => pick(t.id)}
+            className={cn(
+              "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
+              sub === t.id && "bg-muted text-foreground",
+            )}
+          >
+            <t.icon className="size-4" /> {t.label}
+          </button>
+        ))}
+      </div>
+      {SUBTABS.filter((t) => visited.has(t.id)).map((t) => (
+        <div key={t.id} hidden={t.id !== sub}>
+          <t.Page active={active && t.id === sub} />
+        </div>
+      ))}
     </div>
   );
 }

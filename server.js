@@ -11,6 +11,9 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
+import { collectCleanup, killCleanup } from "./cleanup.js";
+import { remoteStatus, startRemote, stopRemote } from "./remote-claude.js";
+import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +26,8 @@ const DASHBOARD_HOST = (process.env.DASHBOARD_HOST || "dashboard.gitgitmiko.my.i
 // melayani link preview publik dan mengalihkan sisanya ke DASHBOARD_HOST. PUBLIC_HOST_LOCKDOWN=0 mematikannya.
 const PUBLIC_HOST_LOCKDOWN = process.env.PUBLIC_HOST_LOCKDOWN !== "0";
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+// Proses yatim yang lebih muda dari ini tidak ditawarkan untuk dibersihkan (mungkin sengaja baru dijalankan).
+const CLEANUP_MIN_AGE_SEC = Number(process.env.CLEANUP_MIN_AGE_SEC ?? 1800);
 const STATIC_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -73,15 +78,14 @@ const CCTV_DIR = resolve(process.env.CCTV_REC_DIR || "/mnt/cctv");
 // API konten sosmed milik scraper-data-gitgit (hanya bisa dijangkau dari host); dibaca read-only.
 const SOCIAL_API_URL = (process.env.SOCIAL_API_URL || "http://172.18.0.1:8791").replace(/\/+$/, "");
 const SOCIAL_API_KEY = process.env.SOCIAL_API_KEY || "";
-// API monitoring KUISABON (youtube_short_automation, service kuisabon); dibaca read-only.
-const KUISABON_API_URL = (process.env.KUISABON_API_URL || "http://172.18.0.1:8797").replace(/\/+$/, "");
-const KUISABON_API_TOKEN = process.env.KUISABON_API_TOKEN || "";
 // API monitoring "Apa yang terjadi jika" (whatif-automation, service whatif); dibaca read-only.
 const WHATIF_API_URL = (process.env.WHATIF_API_URL || "http://172.18.0.1:8798").replace(/\/+$/, "");
 const WHATIF_API_TOKEN = process.env.WHATIF_API_TOKEN || "";
 const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
-const MAX_TERM = 8;
+const MAX_TERM = 16;
+// Folder project yang ditawarkan di tab Remote Claude (satu tombol per repo git).
+const REPOS_DIR = resolve(process.env.REMOTE_REPOS_DIR || join(HOME, "github-repos"));
 const TERM_BUFFER_MAX = 1024 * 1024;
 const sessions = new Map();
 const SESSION_MS = 12 * 60 * 60 * 1000;
@@ -735,9 +739,9 @@ function listTermSessions() {
   return [...termSessions.values()].map((session) => ({ id: session.id, title: session.title }));
 }
 
-function spawnPty() {
+function spawnPty(cwd = HOME) {
   return spawn(PYTHON, ["-u", PTY_BRIDGE], {
-    cwd: HOME,
+    cwd,
     env: {
       ...process.env,
       TERM: "xterm-256color",
@@ -746,7 +750,8 @@ function spawnPty() {
       HOME,
       SHELL: process.env.SHELL || "/bin/bash",
       USER: process.env.USER || "gitgitmiko",
-      PWD: HOME,
+      PWD: cwd,
+      PTY_CWD: cwd,
       PTY_ROWS: "24",
       PTY_COLS: "80",
     },
@@ -788,12 +793,15 @@ function destroyTermSession(id, { alreadyDead } = {}) {
   }
 }
 
-function createTermSession() {
+// opts: { cwd, title, repo, input } — dipakai tab Remote Claude untuk membuka shell di root project
+// dan langsung mengetikkan perintah awal (sama seperti mengetik manual di terminal baru).
+function createTermSession(opts = {}) {
   const id = randomBytes(8).toString("hex");
-  const child = spawnPty();
+  const child = spawnPty(opts.cwd || HOME);
   const session = {
     id,
-    title: `Terminal ${++termSeq}`,
+    title: opts.title || `Terminal ${++termSeq}`,
+    repo: opts.repo || null,
     child,
     buffer: { chunks: [], size: 0 },
     clients: new Set(),
@@ -815,6 +823,7 @@ function createTermSession() {
     destroyTermSession(id, { alreadyDead: true });
   });
   termSessions.set(id, session);
+  if (opts.input && child.stdin.writable) child.stdin.write(opts.input);
   return session;
 }
 
@@ -980,6 +989,11 @@ async function readCatalogLog(lines, rawPage, rawPageSize) {
 
 const ROUTER_DB = join(osHomedir(), ".9router", "db", "data.sqlite");
 const ROUTER_FREE_COMBO = process.env.ROUTER_FREE_COMBO || "gemini-free";
+// Combo memakai alias provider (oc/...), sedangkan usageHistory & providerConnections memakai id aslinya.
+const ROUTER_PROVIDER_ALIAS = { oc: "opencode", or: "openrouter" };
+const ROUTER_PROVIDER_LABEL = { gemini: "Gemini", openrouter: "OpenRouter", opencode: "OpenCode" };
+// Provider tanpa API key: 9router tidak menyimpan koneksi/status untuknya, jadi limit tidak terbaca.
+const ROUTER_NOAUTH = new Set(["opencode"]);
 
 function readFreeUsage() {
   const db = new DatabaseSync(ROUTER_DB, { readOnly: true });
@@ -1005,20 +1019,43 @@ function readFreeUsage() {
       FROM usageHistory GROUP BY provider, model`).all(dayStart.toISOString());
     const used = new Map(rows.map((r) => [`${r.provider}/${r.model}`, r]));
     const now = Date.now();
+    const providerLimited = (info) => !!(info?.rateLimitedUntil && Date.parse(info.rateLimitedUntil) > now);
     const models = pool.map((full) => {
-      const r = used.get(full);
-      const provider = full.slice(0, full.indexOf("/"));
-      const model = full.slice(provider.length + 1);
+      const alias = full.slice(0, full.indexOf("/"));
+      const provider = ROUTER_PROVIDER_ALIAS[alias] || alias;
+      const model = full.slice(alias.length + 1);
+      const r = used.get(`${provider}/${model}`);
       const info = providers[provider];
       const lock = info?.locks[model];
-      const limited = (lock && Date.parse(lock) > now) || (info?.rateLimitedUntil && Date.parse(info.rateLimitedUntil) > now);
+      const locked = !!(lock && Date.parse(lock) > now);
       return {
         model, provider,
         today: r?.today || 0, total: r?.total || 0, tokens: r?.tokens || 0, last: r?.last || null,
-        state: limited || info?.status === "unavailable" ? "limit" : info && info.active === false ? "off" : "ok",
-        note: limited ? (lock || info.rateLimitedUntil) : info?.status === "unavailable" ? info.lastError : null,
+        state: !info && ROUTER_NOAUTH.has(provider) ? "unknown"
+          : locked || providerLimited(info) || info?.status === "unavailable" ? "limit"
+          : info && info.active === false ? "off" : "ok",
+        // Catatan per model hanya untuk lock model; error level provider ditampilkan sekali di grupnya.
+        note: locked ? `Terkunci sampai ${lock}` : null,
       };
     }).sort((a, b) => b.today - a.today || b.total - a.total || a.model.localeCompare(b.model));
+
+    const groups = [...new Set(models.map((m) => m.provider))].map((id) => {
+      const list = models.filter((m) => m.provider === id);
+      const info = providers[id];
+      const state = !info ? (ROUTER_NOAUTH.has(id) ? "unknown" : "ok")
+        : info.active === false ? "off"
+        : providerLimited(info) || info.status === "unavailable" ? "limit" : "ok";
+      const note = !info && ROUTER_NOAUTH.has(id) ? "Tanpa API key — 9router tidak mencatat status/limit provider ini."
+        : providerLimited(info) ? `Rate limit sampai ${info.rateLimitedUntil}`
+        : info?.status === "unavailable" ? info.lastError : null;
+      return {
+        id, label: ROUTER_PROVIDER_LABEL[id] || id, state, note,
+        totalModels: list.length,
+        usedToday: list.filter((m) => m.today > 0).length,
+        requestsToday: list.reduce((n, m) => n + m.today, 0),
+      };
+    }).sort((a, b) => b.requestsToday - a.requestsToday || a.label.localeCompare(b.label));
+
     const usedToday = models.filter((m) => m.today > 0).length;
     const usedAll = models.filter((m) => m.total > 0).length;
     return {
@@ -1026,6 +1063,7 @@ function readFreeUsage() {
       percentToday: models.length ? (usedToday / models.length) * 100 : 0,
       percentAll: models.length ? (usedAll / models.length) * 100 : 0,
       requestsToday: models.reduce((n, m) => n + m.today, 0),
+      providers: groups,
       models,
     };
   } finally {
@@ -1036,7 +1074,7 @@ function readFreeUsage() {
 async function fetchSocial(endpoint, params) {
   if (!SOCIAL_API_KEY) throw httpError(503, "SOCIAL_API_KEY belum di-set di .env dashboard");
   const qs = new URLSearchParams();
-  for (const key of ["account", "status", "date", "page", "pageSize"]) {
+  for (const key of ["account", "platform", "status", "date", "page", "pageSize"]) {
     const v = params.get(key);
     if (v) qs.set(key, v);
   }
@@ -1051,27 +1089,6 @@ async function fetchSocial(endpoint, params) {
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw httpError(res.status, data.error || `API sosmed error ${res.status}`);
-  return data;
-}
-
-async function fetchKuisabon(endpoint, params) {
-  if (!KUISABON_API_TOKEN) throw httpError(503, "KUISABON_API_TOKEN belum di-set di .env dashboard");
-  const qs = new URLSearchParams();
-  for (const key of ["status", "topic", "date", "page", "pageSize", "lines"]) {
-    const v = params.get(key);
-    if (v) qs.set(key, v);
-  }
-  let res;
-  try {
-    res = await fetch(`${KUISABON_API_URL}/api/monitor/${endpoint}${qs.size ? `?${qs}` : ""}`, {
-      headers: { "X-Token": KUISABON_API_TOKEN },
-      signal: AbortSignal.timeout(10000),
-    });
-  } catch {
-    throw httpError(502, "API KUISABON tidak bisa dihubungi (service kuisabon mati?)");
-  }
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw httpError(res.status, data.error || `API KUISABON error ${res.status}`);
   return data;
 }
 
@@ -1397,6 +1414,124 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (path === `${base}/api/remote-claude` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, maxTerm: MAX_TERM, terminals: termSessions.size, ...(await remoteStatus({ reposDir: REPOS_DIR, termSessions })) });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  const remoteAction = /^\/api\/remote-claude\/(start|stop)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && remoteAction && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+      sendJson(res, 415, { ok: false, message: "Harus JSON" });
+      return;
+    }
+    try {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        throw httpError(400, "JSON tidak valid");
+      }
+      const repoName = String(body.repo || "");
+      const result =
+        remoteAction[1] === "start"
+          ? await startRemote({ reposDir: REPOS_DIR, termSessions, createTermSession, maxTerm: MAX_TERM, repoName })
+          : await stopRemote({ reposDir: REPOS_DIR, termSessions, destroyTermSession, repoName });
+      sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/apps` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, apps: await appsStatus() });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  const appIconMatch = /^\/api\/apps\/([a-z0-9-]+)\/icon$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && appIconMatch && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      send(res, 200, await appIcon(appIconMatch[1]), { "Content-Type": "image/png" });
+    } catch (err) {
+      sendJson(res, err.status || 404, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  // POST /api/apps/:id/draft · POST /api/apps/:id/announcements · POST /api/apps/:id/announcements/delete
+  const appAction = /^\/api\/apps\/([a-z0-9-]+)\/(draft|announcements|announcements\/delete)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && appAction && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+      sendJson(res, 415, { ok: false, message: "Harus JSON" });
+      return;
+    }
+    try {
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || "{}");
+      } catch {
+        throw httpError(400, "JSON tidak valid");
+      }
+      const [, appId, action] = appAction;
+      const result =
+        action === "draft"
+          ? { draft: await draftAnnouncement(appId) }
+          : action === "announcements"
+            ? { announcement: await postAnnouncement(appId, body) }
+            : await deleteAnnouncement(appId, body.id);
+      sendJson(res, 200, { ok: true, ...result });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/cleanup` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await collectCleanup({ serverPid: process.pid, ptyBridge: PTY_BRIDGE, minAgeSec: CLEANUP_MIN_AGE_SEC })) });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/cleanup/kill` && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    if (!String(req.headers["content-type"] || "").startsWith("application/json")) {
+      sendJson(res, 415, { ok: false, message: "Harus JSON" });
+      return;
+    }
+    try {
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        throw httpError(400, "JSON tidak valid");
+      }
+      const targets = Array.isArray(body.targets) ? body.targets.filter((t) => Number.isInteger(t?.pid) && Number.isInteger(t?.start)).slice(0, 50) : [];
+      if (!targets.length) throw httpError(400, "Tidak ada proses yang dipilih");
+      sendJson(res, 200, { ok: true, ...(await killCleanup({ serverPid: process.pid, ptyBridge: PTY_BRIDGE, targets, minAgeSec: CLEANUP_MIN_AGE_SEC, logFile: join(HOME, "cron", "dashboard-cleanup.log") })) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
   if (path === `${base}/api/free-usage` && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
@@ -1421,17 +1556,6 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       sendJson(res, 200, { ok: true, ...(await fetchSocial(path.endsWith("/overview") ? "/overview" : "/posts", url.searchParams)) });
-    } catch (err) {
-      sendJson(res, err.status || 502, { ok: false, message: err.message });
-    }
-    return;
-  }
-
-  const ytMatch = /^\/api\/youtube\/(overview|history|logs)$/.exec(path.slice(base.length));
-  if (path.startsWith(base) && ytMatch && req.method === "GET") {
-    if (!requireAuth(req, res)) return;
-    try {
-      sendJson(res, 200, { ok: true, ...(await fetchKuisabon(ytMatch[1], url.searchParams)) });
     } catch (err) {
       sendJson(res, err.status || 502, { ok: false, message: err.message });
     }
