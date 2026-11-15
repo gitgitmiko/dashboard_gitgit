@@ -25,8 +25,11 @@ type FreeUsage = {
   usedAll: number;
   percentAll: number;
   requestsToday: number;
-  models: { model: string; provider: string; today: number; total: number; tokens?: number; state: "ok" | "limit" | "off"; note?: string }[];
+  providers?: { id: string; label: string; state: FreeState; note?: string | null; totalModels: number; usedToday: number; requestsToday: number }[];
+  models: { model: string; provider: string; today: number; total: number; tokens?: number; state: FreeState; note?: string | null }[];
 };
+
+type FreeState = "ok" | "limit" | "off" | "unknown";
 
 type Addresses = {
   interfaces: { name: string; address: string; info: string }[];
@@ -96,44 +99,87 @@ function MetricSkeleton() {
 }
 
 function FreeUsageDialog({ open, onOpenChange, data }: { open: boolean; onOpenChange: (v: boolean) => void; data?: FreeUsage }) {
-  const ST = { ok: ["Aktif", "success"], limit: ["Limit", "warning"], off: ["Nonaktif", "outline"] } as const;
+  const ST = {
+    ok: ["Aktif", "success"],
+    limit: ["Limit", "warning"],
+    off: ["Nonaktif", "outline"],
+    unknown: ["Tak terpantau", "outline"],
+  } as const;
+  // Semua model di pool memang free, jadi akhiran ":free" / "-free" dan prefix vendor cukup jadi keterangan kecil.
+  const splitName = (model: string) => {
+    const clean = model.replace(/(:free|-free)$/, "");
+    const i = clean.lastIndexOf("/");
+    return i < 0 ? { name: clean, vendor: null } : { name: clean.slice(i + 1), vendor: clean.slice(0, i) };
+  };
+  const groups = data?.providers ?? [...new Set(data?.models.map((m) => m.provider))].map((id) => ({ id, label: id, state: "ok" as FreeState, note: null }));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Pemakaian Model Free Hermes</DialogTitle>
           <DialogDescription>
             {data
-              ? `Pool "${data.combo}": ${data.usedToday} dari ${data.totalModels} model free dipakai hari ini (${data.percentToday.toFixed(0)}%), ${data.usedAll} pernah dipakai sejak awal (${data.percentAll.toFixed(0)}%).`
+              ? `Combo "${data.combo}" · ${data.totalModels} model dari ${groups.length} provider. Hari ini ${data.usedToday} model terpakai (${data.percentToday.toFixed(0)}%), ${data.requestsToday} request. Sejak awal ${data.usedAll} model pernah dipakai.`
               : "Memuat…"}
           </DialogDescription>
         </DialogHeader>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Model</TableHead>
-              <TableHead>Provider</TableHead>
-              <TableHead className="text-right">Hari ini / Total</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data?.models.map((m) => (
-              <TableRow key={`${m.provider}/${m.model}`}>
-                <TableCell className="max-w-56 font-medium break-all">{m.model}</TableCell>
-                <TableCell className="text-muted-foreground">{m.provider}</TableCell>
-                <TableCell className="tabular text-right">
-                  {m.today} / {m.total}
-                  {!!m.tokens && <div className="text-xs text-muted-foreground">{m.tokens.toLocaleString("id-ID")} token</div>}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={ST[m.state][1]}>{ST[m.state][0]}</Badge>
-                  {m.note && <div className="mt-1 max-w-48 truncate text-xs text-muted-foreground" title={m.note}>{m.note}</div>}
-                </TableCell>
-              </TableRow>
-            )) ?? <TableEmpty cols={4}>Memuat…</TableEmpty>}
-          </TableBody>
-        </Table>
+        {!data ? (
+          <p className="text-sm text-muted-foreground">Memuat…</p>
+        ) : (
+          <div className="flex flex-col gap-5">
+            {groups.map((g) => {
+              const list = data.models.filter((m) => m.provider === g.id);
+              return (
+                <section key={g.id} className="flex flex-col gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-semibold">{g.label}</h3>
+                    <Badge variant={ST[g.state][1]}>{ST[g.state][0]}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {list.filter((m) => m.today > 0).length}/{list.length} model hari ini · {list.reduce((n, m) => n + m.today, 0)} request
+                    </span>
+                  </div>
+                  {g.note && <p className="rounded-md border border-dashed px-2.5 py-1.5 text-xs break-words text-muted-foreground">{g.note}</p>}
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Model</TableHead>
+                        <TableHead className="text-right">Hari ini / Total</TableHead>
+                        <TableHead className="w-28">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {list.length ? (
+                        list.map((m) => {
+                          const { name, vendor } = splitName(m.model);
+                          // Status provider sudah tampil di judul grup; badge model hanya kalau berbeda.
+                          const own = m.state !== g.state || m.note;
+                          return (
+                            <TableRow key={m.model}>
+                              <TableCell className="max-w-64 break-all">
+                                <div className="font-medium">{name}</div>
+                                {vendor && <div className="text-xs text-muted-foreground">{vendor}</div>}
+                              </TableCell>
+                              <TableCell className={cn("tabular text-right", !m.total && "text-muted-foreground")}>
+                                {m.today} / {m.total}
+                                {!!m.tokens && <div className="text-xs text-muted-foreground">{m.tokens.toLocaleString("id-ID")} token</div>}
+                              </TableCell>
+                              <TableCell>
+                                {own ? <Badge variant={ST[m.state][1]}>{ST[m.state][0]}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
+                                {m.note && <div className="mt-1 max-w-40 truncate text-xs text-muted-foreground" title={m.note}>{m.note}</div>}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      ) : (
+                        <TableEmpty cols={3}>Tidak ada model</TableEmpty>
+                      )}
+                    </TableBody>
+                  </Table>
+                </section>
+              );
+            })}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

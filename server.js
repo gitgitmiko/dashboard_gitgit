@@ -989,6 +989,11 @@ async function readCatalogLog(lines, rawPage, rawPageSize) {
 
 const ROUTER_DB = join(osHomedir(), ".9router", "db", "data.sqlite");
 const ROUTER_FREE_COMBO = process.env.ROUTER_FREE_COMBO || "gemini-free";
+// Combo memakai alias provider (oc/...), sedangkan usageHistory & providerConnections memakai id aslinya.
+const ROUTER_PROVIDER_ALIAS = { oc: "opencode", or: "openrouter" };
+const ROUTER_PROVIDER_LABEL = { gemini: "Gemini", openrouter: "OpenRouter", opencode: "OpenCode" };
+// Provider tanpa API key: 9router tidak menyimpan koneksi/status untuknya, jadi limit tidak terbaca.
+const ROUTER_NOAUTH = new Set(["opencode"]);
 
 function readFreeUsage() {
   const db = new DatabaseSync(ROUTER_DB, { readOnly: true });
@@ -1014,20 +1019,43 @@ function readFreeUsage() {
       FROM usageHistory GROUP BY provider, model`).all(dayStart.toISOString());
     const used = new Map(rows.map((r) => [`${r.provider}/${r.model}`, r]));
     const now = Date.now();
+    const providerLimited = (info) => !!(info?.rateLimitedUntil && Date.parse(info.rateLimitedUntil) > now);
     const models = pool.map((full) => {
-      const r = used.get(full);
-      const provider = full.slice(0, full.indexOf("/"));
-      const model = full.slice(provider.length + 1);
+      const alias = full.slice(0, full.indexOf("/"));
+      const provider = ROUTER_PROVIDER_ALIAS[alias] || alias;
+      const model = full.slice(alias.length + 1);
+      const r = used.get(`${provider}/${model}`);
       const info = providers[provider];
       const lock = info?.locks[model];
-      const limited = (lock && Date.parse(lock) > now) || (info?.rateLimitedUntil && Date.parse(info.rateLimitedUntil) > now);
+      const locked = !!(lock && Date.parse(lock) > now);
       return {
         model, provider,
         today: r?.today || 0, total: r?.total || 0, tokens: r?.tokens || 0, last: r?.last || null,
-        state: limited || info?.status === "unavailable" ? "limit" : info && info.active === false ? "off" : "ok",
-        note: limited ? (lock || info.rateLimitedUntil) : info?.status === "unavailable" ? info.lastError : null,
+        state: !info && ROUTER_NOAUTH.has(provider) ? "unknown"
+          : locked || providerLimited(info) || info?.status === "unavailable" ? "limit"
+          : info && info.active === false ? "off" : "ok",
+        // Catatan per model hanya untuk lock model; error level provider ditampilkan sekali di grupnya.
+        note: locked ? `Terkunci sampai ${lock}` : null,
       };
     }).sort((a, b) => b.today - a.today || b.total - a.total || a.model.localeCompare(b.model));
+
+    const groups = [...new Set(models.map((m) => m.provider))].map((id) => {
+      const list = models.filter((m) => m.provider === id);
+      const info = providers[id];
+      const state = !info ? (ROUTER_NOAUTH.has(id) ? "unknown" : "ok")
+        : info.active === false ? "off"
+        : providerLimited(info) || info.status === "unavailable" ? "limit" : "ok";
+      const note = !info && ROUTER_NOAUTH.has(id) ? "Tanpa API key — 9router tidak mencatat status/limit provider ini."
+        : providerLimited(info) ? `Rate limit sampai ${info.rateLimitedUntil}`
+        : info?.status === "unavailable" ? info.lastError : null;
+      return {
+        id, label: ROUTER_PROVIDER_LABEL[id] || id, state, note,
+        totalModels: list.length,
+        usedToday: list.filter((m) => m.today > 0).length,
+        requestsToday: list.reduce((n, m) => n + m.today, 0),
+      };
+    }).sort((a, b) => b.requestsToday - a.requestsToday || a.label.localeCompare(b.label));
+
     const usedToday = models.filter((m) => m.today > 0).length;
     const usedAll = models.filter((m) => m.total > 0).length;
     return {
@@ -1035,6 +1063,7 @@ function readFreeUsage() {
       percentToday: models.length ? (usedToday / models.length) * 100 : 0,
       percentAll: models.length ? (usedAll / models.length) * 100 : 0,
       requestsToday: models.reduce((n, m) => n + m.today, 0),
+      providers: groups,
       models,
     };
   } finally {
