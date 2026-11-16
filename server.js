@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, readFileSync } from "node:fs";
-import { cp, lstat, mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -1218,6 +1218,10 @@ async function sendCctvFile(req, res, rawDate, rawName, download) {
   // Nama berkas di disk cuma jam (05-00-00.mp4); saat diunduh beri tanggal
   // lengkap supaya tidak bentrok/membingungkan, mis. cctv_2026-10-24_05-00-00.mp4.
   const name = safeDownloadName(`cctv_${basename(dirname(target))}_${basename(target)}`);
+  sendVideoStream(req, res, target, st, name, download);
+}
+
+function sendVideoStream(req, res, target, st, name, download) {
   const headers = {
     "Content-Type": "video/mp4",
     "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${name}"`,
@@ -1244,6 +1248,65 @@ async function sendCctvFile(req, res, rawDate, rawName, download) {
   res.writeHead(200, { ...headers, "Content-Length": st.size });
   if (req.method === "HEAD") { res.end(); return; }
   createReadStream(target).pipe(res);
+}
+
+// ---------------------------------------------------------------- Parodi anime (unggah manual ke FB Pro)
+// Video dibuat otomatis oleh ~/github-repos/parodi-anime (cron 2x sehari). API Facebook tidak bisa memposting ke
+// profil pribadi, jadi dashboard menyediakan unduhan video + caption untuk diunggah manual.
+const PARODI_DIR = join(HOME, "github-repos", "parodi-anime");
+const PARODI_RUNS = join(PARODI_DIR, "runs");
+const PARODI_ID_RE = /^[a-z0-9_]+-ep\d{2}$/;
+
+function parodiDir(id) {
+  if (!PARODI_ID_RE.test(String(id || ""))) throw httpError(400, "ID episode tidak valid");
+  return join(PARODI_RUNS, id);
+}
+
+async function readJsonFile(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function parodiList() {
+  let names = [];
+  try {
+    names = (await readdir(PARODI_RUNS)).filter((n) => PARODI_ID_RE.test(n));
+  } catch {
+    return { episodes: [], producing: null, log: [] };
+  }
+  const episodes = [];
+  let producing = null;
+  for (const id of names) {
+    const d = join(PARODI_RUNS, id);
+    const script = await readJsonFile(join(d, "script.json"));
+    let st = null;
+    try { st = await stat(join(d, "final.mp4")); } catch { /* belum jadi */ }
+    if (!st) {
+      if (script || existsSync(join(d, "img"))) producing = { id, title: script?.judul || id };
+      continue;
+    }
+    let caption = "";
+    try { caption = await readFile(join(d, "caption.txt"), "utf8"); } catch { /* tanpa caption */ }
+    const tts = await readJsonFile(join(d, "tts.json"));
+    const up = await readJsonFile(join(d, "uploaded.json"));
+    const m = /^(.*)-ep(\d{2})$/.exec(id);
+    episodes.push({
+      id, series: m[1], ep: Number(m[2]), title: script?.judul || id, part_title: script?.part_title || "",
+      caption, seconds: tts?.total ?? null, size: st.size, created_at: st.mtime.toISOString(),
+      uploaded_at: up?.uploaded_at || null,
+    });
+  }
+  episodes.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
+  let log = [];
+  try {
+    log = (await readFile(join(PARODI_RUNS, "production.log"), "utf8")).trim().split("\n").slice(-6).reverse();
+  } catch { /* belum ada log */ }
+  // Folder setengah jadi = sedang diproduksi hanya bila baris log terakhir "mulai ..." (bukan sisa produksi gagal).
+  if (producing && !/ mulai /.test(log[0] || "")) producing = { ...producing, stalled: true };
+  return { episodes, producing, log, schedule: ["03:07", "15:37"] };
 }
 
 const server = createServer(async (req, res) => {
@@ -1558,6 +1621,51 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...(await fetchSocial(path.endsWith("/overview") ? "/overview" : "/posts", url.searchParams)) });
     } catch (err) {
       sendJson(res, err.status || 502, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/parodi` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await parodiList()) });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+  const parodiMatch = /^\/api\/parodi\/([a-z0-9_]+-ep\d{2})\/(video|thumb|uploaded)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && parodiMatch) {
+    if (!requireAuth(req, res)) return;
+    try {
+      const d = parodiDir(parodiMatch[1]);
+      if (parodiMatch[2] === "video" && (req.method === "GET" || req.method === "HEAD")) {
+        const target = join(d, "final.mp4");
+        let st;
+        try { st = await stat(target); } catch { throw httpError(404, "Video belum jadi"); }
+        const script = await readJsonFile(join(d, "script.json"));
+        const name = safeDownloadName(`${parodiMatch[1]}_${(script?.part_title || "parodi").replace(/[^\w-]+/g, "-")}.mp4`);
+        sendVideoStream(req, res, target, st, name, url.searchParams.get("download") === "1");
+        return;
+      }
+      if (parodiMatch[2] === "thumb" && req.method === "GET") {
+        const target = join(d, "img", "01.jpg");
+        if (!existsSync(target)) throw httpError(404, "Belum ada gambar");
+        res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=3600" });
+        createReadStream(target).pipe(res);
+        return;
+      }
+      if (parodiMatch[2] === "uploaded" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}");
+        const f = join(d, "uploaded.json");
+        if (body.uploaded) await writeFile(f, JSON.stringify({ uploaded_at: new Date().toISOString() }));
+        else await rm(f, { force: true });
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      throw httpError(405, "Metode tidak didukung");
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }

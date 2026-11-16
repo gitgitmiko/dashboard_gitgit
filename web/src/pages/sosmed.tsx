@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableR
 import { api, qs } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ParodiManual } from "@/pages/parodi";
 import { Whatif } from "@/pages/whatif";
 
 type Slot = {
@@ -251,7 +252,14 @@ function MetaPosts({ platform, active }: { platform: string; active: boolean }) 
 type SubTab = "instagram" | "facebook" | "youtube";
 const SUBTABS: { id: SubTab; label: string; icon: LucideIcon; Page: ComponentType<{ active: boolean }> }[] = [
   { id: "instagram", label: "Instagram", icon: Camera, Page: ({ active }) => <MetaPosts platform="instagram" active={active} /> },
-  { id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => <MetaPosts platform="facebook" active={active} /> },
+  {
+    id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => (
+      <div className="flex flex-col gap-5">
+        <ParodiManual active={active} />
+        <MetaPosts platform="facebook" active={active} />
+      </div>
+    ),
+  },
   { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Whatif },
 ];
 const SUBTAB_KEY = "dg-sosmed-tab";
