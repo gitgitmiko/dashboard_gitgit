@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, readFileSync } from "node:fs";
-import { cp, lstat, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -582,9 +582,53 @@ function guardProtected(p) {
   if (p === "/" || p === HOME || dirname(p) === "/") throw httpError(403, `Folder ${p} dilindungi`);
 }
 
-// Folder actions from the Folder tab: mkdir, newfile, rename, copy, move, delete.
+const MAX_EDIT = 2 * 1024 * 1024;
+
+// Simpan isi berkas teks dari editor tab Folder. `mtime` = waktu ubah saat berkas dibuka;
+// kalau berkas sudah diubah pihak lain sejak itu, tolak (409) kecuali `force`.
+// Ditulis ke berkas sementara lalu di-rename supaya tidak pernah setengah tertulis.
+async function writeTextFile(body) {
+  if (typeof body.content !== "string") throw httpError(400, "Isi berkas tidak valid");
+  let target;
+  try {
+    // Symlink: tulis ke berkas aslinya, jangan ganti link-nya dengan berkas biasa.
+    target = await realpath(resolveUserPath(body.path));
+  } catch (err) {
+    throw fsError(err);
+  }
+  if (Buffer.byteLength(body.content) > MAX_EDIT) throw httpError(413, "Berkas terlalu besar untuk disimpan dari editor (maks. 2 MB)");
+  let st;
+  try {
+    st = await stat(target);
+  } catch (err) {
+    throw fsError(err);
+  }
+  if (!st.isFile()) throw httpError(400, "Bukan berkas biasa");
+  if (!body.force && body.mtime && st.mtime.toISOString() !== body.mtime) {
+    throw httpError(409, "Berkas sudah diubah di tempat lain sejak dibuka");
+  }
+  const tmp = join(dirname(target), `.${basename(target)}.dg-${randomBytes(4).toString("hex")}.tmp`);
+  try {
+    await writeFile(tmp, body.content, { mode: st.mode & 0o7777, flag: "wx" });
+    await rename(tmp, target);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    // Folder tidak bisa ditulis tapi berkasnya bisa: timpa langsung.
+    if (err.code !== "EACCES" && err.code !== "EPERM") throw fsError(err);
+    try {
+      await writeFile(target, body.content);
+    } catch (err2) {
+      throw fsError(err2);
+    }
+  }
+  const after = await stat(target);
+  return { path: target, size: after.size, mtime: after.mtime.toISOString() };
+}
+
+// Folder actions from the Folder tab: mkdir, newfile, rename, copy, move, delete, write.
 async function fsOp(body) {
   const op = body.op;
+  if (op === "write") return writeTextFile(body);
   if (op === "mkdir" || op === "newfile") {
     const target = join(resolveUserPath(body.dir), cleanName(body.name));
     try {

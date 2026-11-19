@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { type EditTarget, FileEditor } from "@/components/file-editor";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,7 +49,7 @@ type Preview =
   | { kind: "error"; path: string; message: string }
   | { kind: "image"; path: string; name: string; size: number }
   | { kind: "binary"; path: string; size: number }
-  | { kind: "text"; path: string; size: number; content: string; truncated: boolean };
+  | { kind: "text"; path: string; size: number; content: string; truncated: boolean; mtime: string | null };
 type Clip = { mode: "copy" | "cut"; paths: string[] };
 
 const nameOf = (p: string) => p.split("/").pop() || p;
@@ -131,6 +132,7 @@ export function Files() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [mobilePreview, setMobilePreview] = useState(false);
   const [clip, setClip] = useState<Clip | null>(null);
+  const [editing, setEditing] = useState<EditTarget | null>(null);
   const [upload, setUpload] = useState<{ label: string; percent: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
@@ -185,12 +187,12 @@ export function Files() {
     }
     setPreview({ kind: "loading", path: entry.path });
     try {
-      const d = await api<{ type: "image" | "binary" | "text"; name: string; size: number; content: string | null; truncated?: boolean }>(`/api/fs/preview${qs({ path: entry.path })}`);
+      const d = await api<{ type: "image" | "binary" | "text"; name: string; size: number; content: string | null; truncated?: boolean; mtime?: string }>(`/api/fs/preview${qs({ path: entry.path })}`);
       setPreview((cur) => {
         if (cur?.path !== entry.path) return cur; // pengguna sudah memilih berkas lain
         if (d.type === "image") return { kind: "image", path: entry.path, name: d.name, size: d.size };
         if (d.type === "binary") return { kind: "binary", path: entry.path, size: d.size };
-        return { kind: "text", path: entry.path, size: d.size, content: d.content || "", truncated: !!d.truncated };
+        return { kind: "text", path: entry.path, size: d.size, content: d.content || "", truncated: !!d.truncated, mtime: d.mtime || null };
       });
     } catch (e) {
       setPreview({ kind: "error", path: entry.path, message: (e as Error).message || "Tidak bisa dibuka" });
@@ -336,8 +338,19 @@ export function Files() {
 
   const hasFiles = (e: React.DragEvent) => [...(e.dataTransfer?.types || [])].includes("Files");
 
+  const canEdit = preview?.kind === "text" && !preview.truncated;
   const previewActions = (
     <>
+      {preview?.kind === "text" && (
+        <Button
+          size="sm"
+          disabled={!canEdit}
+          title={canEdit ? "Edit berkas" : "Berkas lebih dari 512 KB, tidak bisa diedit di sini"}
+          onClick={() => preview.kind === "text" && setEditing({ path: preview.path, content: preview.content, mtime: preview.mtime })}
+        >
+          <Pencil /> Edit
+        </Button>
+      )}
       <Button variant="outline" size="sm" disabled={!selected || preview?.kind === "dir"} onClick={() => (window.location.href = fileUrl(selected, true))}>
         <Download /> Unduh
       </Button>
@@ -598,6 +611,15 @@ export function Files() {
           </Card>
         )}
       </div>
+
+      <FileEditor
+        target={editing}
+        onClose={() => setEditing(null)}
+        onSaved={(t) => {
+          setPreview((p) => (p?.kind === "text" && p.path === t.path ? { ...p, content: t.content, size: t.size, mtime: t.mtime } : p));
+          setListing((l) => (l ? { ...l, entries: l.entries.map((e) => (e.path === t.path ? { ...e, size: t.size, mtime: t.mtime } : e)) } : l));
+        }}
+      />
 
       {/* Pratinjau (HP): layar penuh */}
       {!isDesktop && (
