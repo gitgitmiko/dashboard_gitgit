@@ -8,7 +8,7 @@ import { SessionContext } from "@/lib/session";
 import { tabFromHash, type TabId } from "@/nav";
 import { Cctv } from "@/pages/cctv";
 import { Files } from "@/pages/files";
-import { Logs } from "@/pages/logs";
+import { Scraper } from "@/pages/scraper";
 import { Sosmed } from "@/pages/sosmed";
 import { Overview } from "@/pages/overview";
 import { RemoteClaude } from "@/pages/remote-claude";
@@ -22,7 +22,7 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   files: Files,
   terminal: TerminalPage,
   remote: RemoteClaude,
-  logs: Logs,
+  scraper: Scraper,
   cctv: Cctv,
   sosmed: Sosmed,
   apps: Apps,

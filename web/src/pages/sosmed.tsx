@@ -1,7 +1,8 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { type ComponentType, useState } from "react";
-import { Camera, type LucideIcon, SquarePlay, Users } from "lucide-react";
+import { useState } from "react";
+import { Camera, SquarePlay, Users } from "lucide-react";
 import { DateFilter, ErrText, ExtLink, PostBadge, Thumb } from "@/components/automation";
+import { SubTabs, type SubTabDef } from "@/components/subtabs";
 import { ErrorNote, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +10,6 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, qs } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { ParodiManual } from "@/pages/parodi";
 import { Whatif } from "@/pages/whatif";
 
@@ -249,8 +249,7 @@ function MetaPosts({ platform, active }: { platform: string; active: boolean }) 
   );
 }
 
-type SubTab = "instagram" | "facebook" | "youtube";
-const SUBTABS: { id: SubTab; label: string; icon: LucideIcon; Page: ComponentType<{ active: boolean }> }[] = [
+const SUBTABS: SubTabDef<"instagram" | "facebook" | "youtube">[] = [
   { id: "instagram", label: "Instagram", icon: Camera, Page: ({ active }) => <MetaPosts platform="instagram" active={active} /> },
   {
     id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => (
@@ -262,44 +261,6 @@ const SUBTABS: { id: SubTab; label: string; icon: LucideIcon; Page: ComponentTyp
   },
   { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Whatif },
 ];
-const SUBTAB_KEY = "dg-sosmed-tab";
-
 export function Sosmed({ active }: { active: boolean }) {
-  const [sub, setSub] = useState<SubTab>(() => {
-    const saved = localStorage.getItem(SUBTAB_KEY);
-    return SUBTABS.some((t) => t.id === saved) ? (saved as SubTab) : "instagram";
-  });
-  // Sama seperti tab utama: sub-tab yang pernah dibuka tetap ter-mount supaya filter/halamannya awet.
-  const [visited, setVisited] = useState<Set<SubTab>>(() => new Set([sub]));
-  const pick = (id: SubTab) => {
-    setSub(id);
-    setVisited((v) => (v.has(id) ? v : new Set(v).add(id)));
-    localStorage.setItem(SUBTAB_KEY, id);
-  };
-
-  return (
-    <div className="flex flex-col gap-5">
-      <div role="tablist" className="inline-flex w-fit gap-1 rounded-lg border bg-card p-1">
-        {SUBTABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={sub === t.id}
-            onClick={() => pick(t.id)}
-            className={cn(
-              "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
-              sub === t.id && "bg-muted text-foreground",
-            )}
-          >
-            <t.icon className="size-4" /> {t.label}
-          </button>
-        ))}
-      </div>
-      {SUBTABS.filter((t) => visited.has(t.id)).map((t) => (
-        <div key={t.id} hidden={t.id !== sub}>
-          <t.Page active={active && t.id === sub} />
-        </div>
-      ))}
-    </div>
-  );
+  return <SubTabs tabs={SUBTABS} storageKey="dg-sosmed-tab" active={active} />;
 }

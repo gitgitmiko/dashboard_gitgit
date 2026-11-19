@@ -987,6 +987,121 @@ async function readCatalogLog(lines, rawPage, rawPageSize) {
   }
 }
 
+// Log scraper-data-gitgit: satu file per hari (scrape-YYYY-MM-DD.log), cron menit 05 tiap jam.
+const GITGIT_SCRAPE_DIR = process.env.GITGIT_SCRAPE_LOG_DIR || join(REPOS_DIR, "scraper-data-gitgit", "data", "logs");
+const GITGIT_LOG_RE = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),(\d{3}) (\w+) ([^:]+): (.*)$/;
+// Jeda antar baris lebih dari ini dianggap run baru walau "Selesai." tidak tercatat (run mati di tengah).
+const GITGIT_RUN_GAP_MS = 30 * 60 * 1000;
+// Run terakhir tanpa "Selesai." dianggap masih berjalan bila log masih ditulis dalam rentang ini.
+const GITGIT_RUNNING_MS = 20 * 60 * 1000;
+
+async function readTail(file, maxBytes) {
+  const handle = await open(file, "r");
+  try {
+    const st = await handle.stat();
+    const len = Math.min(st.size, maxBytes);
+    const buf = Buffer.alloc(len);
+    await handle.read(buf, 0, len, st.size - len);
+    const lines = buf.toString("utf8").split("\n");
+    if (st.size > len) lines.shift();
+    if (lines[lines.length - 1] === "") lines.pop();
+    return { lines, size: st.size, mtime: st.mtimeMs };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readGitgitScrapeLog(lines, rawPage, rawPageSize) {
+  const want = Math.max(20, Math.min(2000, lines || 300));
+  const pageSize = PAGE_SIZES.includes(Number(rawPageSize)) ? Number(rawPageSize) : 10;
+  const page = Math.max(1, Math.floor(Number(rawPage)) || 1);
+  let files;
+  try {
+    files = (await readdir(GITGIT_SCRAPE_DIR)).filter((f) => /^scrape-\d{4}-\d{2}-\d{2}\.log$/.test(f)).sort();
+  } catch {
+    throw httpError(404, `Folder log tidak ditemukan: ${GITGIT_SCRAPE_DIR}`);
+  }
+  if (!files.length) throw httpError(404, `Belum ada log di ${GITGIT_SCRAPE_DIR}`);
+
+  // Dua hari terakhir cukup untuk riwayat ~24+ run tanpa membaca seluruh arsip.
+  const recent = files.slice(-2);
+  let all = [];
+  let size = 0;
+  let mtime = 0;
+  for (const f of recent) {
+    const t = await readTail(join(GITGIT_SCRAPE_DIR, f), LOG_TAIL_BYTES);
+    all = all.concat(t.lines);
+    size = t.size;
+    mtime = t.mtime;
+  }
+
+  const runs = [];
+  let run = null;
+  let lastAt = 0;
+  for (const line of all) {
+    const m = GITGIT_LOG_RE.exec(line);
+    if (!m) {
+      // Baris lanjutan (traceback dsb.) ikut run yang sedang berjalan.
+      if (run && /Traceback|Error/.test(line)) run.errors.push(line.trim());
+      continue;
+    }
+    const [, day, clock, ms, lvl, logger, msg] = m;
+    const at = new Date(`${day}T${clock}.${ms}`).getTime();
+    if (!run || run.done || at - lastAt > GITGIT_RUN_GAP_MS) {
+      run = { startAt: at, endAt: at, done: false, fresh: 0, warnings: [], errors: [] };
+      runs.push(run);
+    }
+    lastAt = at;
+    run.endAt = at;
+    // "Retrying …" urllib3 = koneksi diulang otomatis, bukan kegagalan.
+    if (lvl === "WARNING" && !(logger === "urllib3.connectionpool" && msg.startsWith("Retrying"))) run.warnings.push(msg);
+    else if (lvl === "ERROR" || lvl === "CRITICAL") run.errors.push(msg);
+    const fresh = /: \d+ entri, (\d+) baru$/.exec(msg);
+    if (fresh) run.fresh += Number(fresh[1]);
+    if (msg === "Selesai.") run.done = true;
+  }
+
+  const now = Date.now();
+  const allRuns = runs.reverse().map((r, i) => {
+    let status;
+    if (r.done) status = r.errors.length || r.warnings.length ? "partial" : "synced";
+    else status = i === 0 && now - mtime < GITGIT_RUNNING_MS ? "running" : "failed";
+    return {
+      start: new Date(r.startAt).toISOString(),
+      end: new Date(r.endAt).toISOString(),
+      status,
+      fresh: r.fresh,
+      warnings: r.warnings.length,
+      errors: r.errors.length,
+      notes: [...r.errors, ...r.warnings].slice(0, 3).map((n) => (n.length > 200 ? `${n.slice(0, 200)}…` : n)),
+    };
+  });
+
+  const total = allRuns.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const windowRuns = allRuns.slice(0, Math.min(24, total));
+  return {
+    path: join(GITGIT_SCRAPE_DIR, recent[recent.length - 1]),
+    size,
+    mtime,
+    runs: allRuns.slice(start, start + pageSize),
+    runsTotal: total,
+    page: safePage,
+    pageSize,
+    totalPages,
+    summary: {
+      last: allRuns[0] || null,
+      windowSize: windowRuns.length,
+      done: windowRuns.filter((r) => r.status === "synced" || r.status === "partial").length,
+      failed: windowRuns.filter((r) => r.status === "failed").length,
+      fresh: windowRuns.reduce((n, r) => n + r.fresh, 0),
+    },
+    lines: all.slice(-want),
+  };
+}
+
 const ROUTER_DB = join(osHomedir(), ".9router", "db", "data.sqlite");
 const ROUTER_FREE_COMBO = process.env.ROUTER_FREE_COMBO || "gemini-free";
 // Combo memakai alias provider (oc/...), sedangkan usageHistory & providerConnections memakai id aslinya.
@@ -1599,6 +1714,16 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       sendJson(res, 200, { ok: true, ...readFreeUsage() });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/scraper/gitgit` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await readGitgitScrapeLog(Number(url.searchParams.get("lines")), url.searchParams.get("page"), url.searchParams.get("pageSize"))) });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
