@@ -101,7 +101,7 @@ function mysqlConn() {
     });
     mysqlPool.on("connection", (c) => {
       // Statistik information_schema MySQL 8 di-cache 24 jam secara bawaan → paksa segar.
-      c.query("SET SESSION information_schema_stats_expiry = 0, SESSION max_execution_time = 8000, SESSION TRANSACTION READ ONLY");
+      c.query("SET SESSION information_schema_stats_expiry = 0, SESSION max_execution_time = 8000, SESSION transaction_read_only = ON");
     });
   }
   return mysqlPool;
