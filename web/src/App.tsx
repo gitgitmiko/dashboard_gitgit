@@ -7,6 +7,7 @@ import { DialogsProvider } from "@/lib/dialogs";
 import { SessionContext } from "@/lib/session";
 import { tabFromHash, type TabId } from "@/nav";
 import { Cctv } from "@/pages/cctv";
+import { Database } from "@/pages/database";
 import { Files } from "@/pages/files";
 import { Scraper } from "@/pages/scraper";
 import { Sosmed } from "@/pages/sosmed";
@@ -23,6 +24,7 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   terminal: TerminalPage,
   remote: RemoteClaude,
   scraper: Scraper,
+  database: Database,
   cctv: Cctv,
   sosmed: Sosmed,
   apps: Apps,

@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { collectCleanup, killCleanup } from "./cleanup.js";
 import { remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
+import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 
 const execFileAsync = promisify(execFile);
@@ -1758,6 +1759,26 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       sendJson(res, 200, { ok: true, ...readFreeUsage() });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  if (path.startsWith(`${base}/api/db`) && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    const rest = path.slice(`${base}/api/db`.length).split("/").filter(Boolean).map(decodeURIComponent);
+    const p = url.searchParams;
+    try {
+      let data;
+      if (!rest.length) data = await dbOverview();
+      else if (rest.length === 2 && rest[1] === "databases") data = await dbDatabases(rest[0]);
+      else if (rest.length === 2 && rest[1] === "tables") data = await dbTables(rest[0], p.get("db") || "");
+      else if (rest.length === 2 && rest[1] === "queries") data = await dbQueries(rest[0]);
+      else if (rest.length === 2 && rest[1] === "rows")
+        data = await dbRows(rest[0], p.get("db") || "", p.get("table") || "", { page: p.get("page"), pageSize: p.get("pageSize"), sort: p.get("sort"), dir: p.get("dir") });
+      else throw httpError(404, "Tidak ditemukan");
+      sendJson(res, 200, { ok: true, ...data });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }

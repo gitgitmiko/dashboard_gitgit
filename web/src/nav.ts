@@ -1,6 +1,6 @@
-import { Bot, FolderOpen, Gamepad2, LayoutDashboard, type LucideIcon, Share2, Smartphone, SquareTerminal, Video } from "lucide-react";
+import { Bot, Database, FolderOpen, Gamepad2, LayoutDashboard, type LucideIcon, Share2, Smartphone, SquareTerminal, Video } from "lucide-react";
 
-export type TabId = "overview" | "files" | "terminal" | "remote" | "scraper" | "cctv" | "sosmed" | "apps";
+export type TabId = "overview" | "files" | "terminal" | "remote" | "database" | "scraper" | "cctv" | "sosmed" | "apps";
 
 export type NavGroup = "server" | "otomasi" | "produk";
 
@@ -15,6 +15,7 @@ export const NAV: { id: TabId; label: string; icon: LucideIcon; group: NavGroup 
   { id: "files", label: "Folder", icon: FolderOpen, group: "server" },
   { id: "terminal", label: "Terminal", icon: SquareTerminal, group: "server" },
   { id: "remote", label: "Remote Claude", icon: Smartphone, group: "server" },
+  { id: "database", label: "Database", icon: Database, group: "server" },
   { id: "cctv", label: "CCTV", icon: Video, group: "server" },
   { id: "scraper", label: "Scraper", icon: Bot, group: "otomasi" },
   { id: "sosmed", label: "Sosmed", icon: Share2, group: "otomasi" },
