@@ -1,13 +1,14 @@
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Maximize2, Minimize2, Plus, RefreshCw, SquareTerminal, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Maximize2, Minimize2, Plus, RefreshCw, SquareTerminal, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
 import { useAsk } from "@/lib/dialogs";
 import { shellQuote } from "@/lib/format";
 import { onPendingCd, takePendingCd, takePendingFocus } from "@/lib/terminal-bus";
-import { TermSession, type TermStatus } from "@/lib/terminal-session";
+import { copyText, TermSession, type TermStatus } from "@/lib/terminal-session";
 import { cn } from "@/lib/utils";
 
 const DOT: Record<TermStatus, string> = {
@@ -38,6 +39,9 @@ export function TerminalPage({ active }: { active: boolean }) {
   const [order, setOrder] = useState<string[]>([]);
   const [current, setCurrent] = useState("");
   const [full, setFull] = useState(false);
+  // Teks terminal yang ditampilkan di dialog salin (null = dialog tertutup).
+  const [copyView, setCopyView] = useState<string | null>(null);
+  const copyArea = useRef<HTMLTextAreaElement>(null);
   const [, rerender] = useReducer((x: number) => x + 1, 0);
   const restored = useRef<Promise<void> | null>(null);
 
@@ -175,6 +179,18 @@ export function TerminalPage({ active }: { active: boolean }) {
     }
   });
 
+  // Ada seleksi (mouse) → langsung salin; tidak ada (mis. di HP) → tampilkan teks yang bisa diseleksi.
+  async function copyFromTerm() {
+    if (!cur) return;
+    const sel = cur.selection();
+    if (sel) {
+      if (await copyText(sel)) toast.success("Teks disalin");
+      else toast.error("Gagal menyalin");
+      return;
+    }
+    setCopyView(cur.text());
+  }
+
   async function closeTerm(s: TermSession) {
     if (!s.isDead) {
       const yes = await ask({
@@ -234,6 +250,17 @@ export function TerminalPage({ active }: { active: boolean }) {
           variant="ghost"
           size="icon-sm"
           className="size-7 text-zinc-400 hover:bg-white/10 hover:text-white"
+          title="Salin teks (seleksi, atau pilih dari isi terminal)"
+          disabled={!cur}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={copyFromTerm}
+        >
+          <Copy />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="size-7 text-zinc-400 hover:bg-white/10 hover:text-white"
           title="Sambungkan ulang"
           onClick={() => {
             sessions.current.forEach((s) => s.connect());
@@ -281,6 +308,56 @@ export function TerminalPage({ active }: { active: boolean }) {
           </div>
         )}
       </div>
+
+      <Dialog open={copyView !== null} onOpenChange={(o) => !o && setCopyView(null)}>
+        <DialogContent
+          className="max-w-3xl gap-3 p-3 sm:p-4"
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            // Gulir ke bawah: yang biasanya mau disalin adalah keluaran terakhir.
+            requestAnimationFrame(() => {
+              const ta = copyArea.current;
+              if (ta) ta.scrollTop = ta.scrollHeight;
+            });
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Salin dari terminal</DialogTitle>
+            <DialogDescription>Tekan lama pada teks untuk memilih bagian yang mau disalin, atau salin semuanya.</DialogDescription>
+          </DialogHeader>
+          <textarea
+            ref={copyArea}
+            readOnly
+            value={copyView ?? ""}
+            spellCheck={false}
+            className="h-[60svh] w-full resize-none rounded-md border bg-[#0b0b0e] p-2 font-mono text-xs leading-relaxed whitespace-pre text-zinc-200 outline-none"
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                const ta = copyArea.current;
+                const part = ta && ta.selectionEnd > ta.selectionStart ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+                if (!part) return toast("Pilih dulu teksnya dengan tekan lama");
+                if (await copyText(part)) toast.success("Teks pilihan disalin");
+                else toast.error("Gagal menyalin, salin manual dari menu tekan lama");
+              }}
+            >
+              Salin pilihan
+            </Button>
+            <Button
+              size="sm"
+              onClick={async () => {
+                if (await copyText(copyView ?? "")) toast.success("Semua teks disalin");
+                else toast.error("Gagal menyalin, salin manual dari menu tekan lama");
+              }}
+            >
+              <Copy /> Salin semua
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Tombol tambahan untuk HP / layar sentuh */}
       {cur && (

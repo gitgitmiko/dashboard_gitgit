@@ -23,6 +23,24 @@ function b64ToBytes(b64: string) {
   return out;
 }
 
+/** Salin ke clipboard; fallback execCommand untuk browser yang menolak Clipboard API. */
+export async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  }
+}
+
 /**
  * Satu terminal di browser: xterm + WebSocket ke sesi shell di server.
  * Shell di server tetap hidup saat koneksi putus/halaman di-refresh; hanya close() yang mematikannya.
@@ -60,6 +78,14 @@ export class TermSession {
     });
     this.term.loadAddon(this.fit);
     this.term.onData((data) => this.sendRaw(data));
+    // Ctrl+Shift+C menyalin seleksi (Ctrl+C tetap mengirim ^C ke shell).
+    this.term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.ctrlKey && e.shiftKey && e.code === "KeyC") {
+        if (this.term.hasSelection()) void copyText(this.term.getSelection());
+        return false;
+      }
+      return true;
+    });
     this.connect();
   }
 
@@ -166,6 +192,27 @@ export class TermSession {
 
   focus() {
     this.term.focus();
+  }
+
+  /** Teks yang sedang diseleksi di terminal (kosong kalau tidak ada). */
+  selection() {
+    return this.term.hasSelection() ? this.term.getSelection() : "";
+  }
+
+  /** Isi layar + riwayat sebagai teks biasa (maks. `limit` baris terakhir), untuk diseleksi di HP. */
+  text(limit = 500) {
+    const buf = this.term.buffer.active;
+    const lines: string[] = [];
+    for (let i = Math.max(0, buf.length - limit); i < buf.length; i += 1) {
+      const line = buf.getLine(i);
+      if (!line) continue;
+      const s = line.translateToString(true);
+      // Baris yang terpotong otomatis (wrap) disambung ke baris sebelumnya.
+      if (line.isWrapped && lines.length) lines[lines.length - 1] += s;
+      else lines.push(s);
+    }
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    return lines.join("\n");
   }
 
   /** Lepas dari browser saja; shell di server tetap hidup. */
