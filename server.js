@@ -1148,6 +1148,7 @@ async function readGitgitScrapeLog(lines, rawPage, rawPageSize) {
 }
 
 const ROUTER_DB = join(osHomedir(), ".9router", "db", "data.sqlite");
+const SECURITY_HELPER = "/usr/local/sbin/gitgit-security";
 const ROUTER_FREE_COMBO = process.env.ROUTER_FREE_COMBO || "gemini-free";
 // Combo memakai alias provider (oc/...), sedangkan usageHistory & providerConnections memakai id aslinya.
 const ROUTER_PROVIDER_ALIAS = { oc: "opencode", or: "openrouter" };
@@ -1623,6 +1624,41 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...(await collectStats()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  // Menu Keamanan: data fail2ban lewat helper root yang diizinkan sudo tanpa password (hanya script ini).
+  if (path === `${base}/api/security` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    const days = Math.max(1, Math.min(30, Number(url.searchParams.get("days")) || 7));
+    try {
+      const { stdout } = await execFileAsync("sudo", ["-n", SECURITY_HELPER, "report", String(days)], { timeout: 30000, maxBuffer: 8 << 20 });
+      sendJson(res, 200, JSON.parse(stdout));
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: `Gagal membaca data keamanan: ${err.stderr?.trim() || err.message}` });
+    }
+    return;
+  }
+
+  if (path === `${base}/api/security/unban` && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    let ip = "";
+    try {
+      ip = String(JSON.parse(await readBody(req)).ip || "").trim();
+    } catch {
+      /* ditolak di bawah */
+    }
+    if (!/^[0-9a-fA-F:.]{3,45}$/.test(ip)) {
+      sendJson(res, 400, { ok: false, message: "IP tidak valid" });
+      return;
+    }
+    try {
+      const { stdout } = await execFileAsync("sudo", ["-n", SECURITY_HELPER, "unban", ip], { timeout: 60000 });
+      const data = JSON.parse(stdout);
+      sendJson(res, data.ok ? 200 : 400, data);
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: `Gagal melepas blokir: ${err.stderr?.trim() || err.message}` });
     }
     return;
   }

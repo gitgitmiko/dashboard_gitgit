@@ -10,6 +10,7 @@ import { Cctv } from "@/pages/cctv";
 import { Database } from "@/pages/database";
 import { Files } from "@/pages/files";
 import { Scraper } from "@/pages/scraper";
+import { Security } from "@/pages/security";
 import { Sosmed } from "@/pages/sosmed";
 import { Overview } from "@/pages/overview";
 import { RemoteClaude } from "@/pages/remote-claude";
@@ -28,6 +29,7 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   cctv: Cctv,
   sosmed: Sosmed,
   apps: Apps,
+  security: Security,
 };
 
 export default function App() {
