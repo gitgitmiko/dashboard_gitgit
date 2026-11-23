@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { CalendarClock, Clock, ExternalLink, Gauge, Globe, Lock, type LucideIcon, Music2, RefreshCw, Repeat, Send, Timer, Unplug, X } from "lucide-react";
 import { ErrorNote, RefreshButton } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
 import { BASE, api } from "@/lib/api";
 
@@ -122,6 +123,72 @@ function Composer({ item, creator, nextSlot, onDone }: { item: Item; creator: Cr
   );
 }
 
+// Id video diawali tanggal (YYYYMMDD); tampilkan sebagai tanggal biasa kalau cocok.
+const idDate = (id: string) => {
+  const m = /^(\d{4})(\d{2})(\d{2})/.exec(id);
+  if (!m) return id.slice(0, 8);
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return isNaN(d.getTime()) ? id.slice(0, 8) : d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+};
+
+function Info({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-start gap-2.5 rounded-lg bg-muted/50 p-2.5">
+      <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0">
+        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className="text-sm font-medium">{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function VideoRow({ it, d, open, setOpen, refresh }: { it: Item; d: Status; open: boolean; setOpen: (v: boolean) => void; refresh: () => void }) {
+  const c = d.creator;
+  const st = it.post ? STATUS[it.post.status] ?? [it.post.status, "secondary"] : null;
+  const pending = it.post && it.post.status !== "PUBLISH_COMPLETE" && it.post.status !== "FAILED";
+  const postId = it.post?.post_ids?.[0];
+  const check = async () => {
+    try { await api(`/api/tiktok/status/${it.id}`, { method: "POST" }); } finally { refresh(); }
+  };
+  return (
+    <Card className="gap-0 overflow-hidden py-0">
+      <div className="flex gap-3 p-3 sm:p-4">
+        <video src={`${BASE}/api/tiktok/video/${it.id}#t=0.5`} preload="metadata" muted playsInline tabIndex={-1}
+          className="pointer-events-none aspect-[9/16] w-14 shrink-0 rounded-md bg-black object-cover sm:w-16" />
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div className="line-clamp-2 leading-snug font-semibold">{it.title}</div>
+          <div className="flex flex-wrap gap-x-1.5 text-xs text-muted-foreground">
+            <span>{idDate(it.id)}</span><span>·</span><span>{it.format}</span><span>·</span><span>{(it.size / 1048576).toFixed(1)} MB</span>
+          </div>
+          <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-1">
+            {it.scheduled && <Badge variant="warning"><CalendarClock /> {when(it.scheduled)}</Badge>}
+            {st && <Badge variant={st[1]}>{st[0]}</Badge>}
+            {it.post && <Badge variant="outline">{it.post.privacy_level === "SELF_ONLY" ? <Lock /> : <Globe />}{PRIVACY[it.post.privacy_level] ?? it.post.privacy_level}</Badge>}
+            {!it.post && !it.scheduled && <Badge variant="outline">Belum diposting</Badge>}
+          </div>
+        </div>
+      </div>
+      {it.post?.fail_reason && <p className="mx-3 mb-3 rounded-md bg-destructive/10 p-2 text-sm text-destructive sm:mx-4">Gagal: {it.post.fail_reason}</p>}
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t bg-muted/20 px-3 py-2 sm:px-4">
+        {postId && c?.creator_username && (
+          <Button variant="ghost" size="sm" asChild className="mr-auto">
+            <a href={`https://www.tiktok.com/@${c.creator_username}/video/${postId}`} target="_blank" rel="noopener"><ExternalLink /> Lihat di TikTok</a>
+          </Button>
+        )}
+        {it.scheduled && <Button variant="ghost" size="sm" onClick={async () => { await api(`/api/tiktok/unschedule/${it.id}`, { method: "POST" }); refresh(); }}>Batalkan jadwal</Button>}
+        {pending && <Button variant="outline" size="sm" onClick={check}><RefreshCw /> Cek status</Button>}
+        {d.connected && c && (
+          <Button variant={open ? "secondary" : it.post || it.scheduled ? "outline" : "default"} size="sm" onClick={() => setOpen(!open)}>
+            {open ? <><X /> Tutup</> : it.post ? <><Repeat /> Posting lagi</> : <><Send /> Tinjau & posting</>}
+          </Button>
+        )}
+      </div>
+      {open && c && <div className="border-t p-3 sm:p-4"><Composer item={it} creator={c} nextSlot={d.nextSlot} onDone={refresh} /></div>}
+    </Card>
+  );
+}
+
 export function TikTok({ active }: { active: boolean }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["tiktok"], queryFn: () => api<Status>("/api/tiktok"), refetchInterval: active ? 30000 : false });
@@ -136,73 +203,78 @@ export function TikTok({ active }: { active: boolean }) {
   }, []);
   const d = q.data;
   const refresh = () => qc.invalidateQueries({ queryKey: ["tiktok"] });
-  const check = async (id: string) => {
-    try { await api(`/api/tiktok/status/${id}`, { method: "POST" }); } finally { refresh(); }
+  const disconnect = async () => {
+    if (!window.confirm("Putuskan akun TikTok? Video terjadwal tidak akan diposting sampai akun dihubungkan lagi.")) return;
+    await api("/api/tiktok/disconnect", { method: "POST" });
+    refresh();
   };
   const c = d?.creator;
+  const name = d?.connected ? (c?.creator_nickname || d.user?.display_name || "Akun TikTok") : "Akun TikTok";
+  const avatar = c?.creator_avatar_url || d?.user?.avatar_url;
+  const queue = d?.queue ?? [];
+  const groups: [string, Item[]][] = [
+    ["Perlu ditinjau", queue.filter((it) => !it.post && !it.scheduled)],
+    ["Terjadwal", queue.filter((it) => it.scheduled)],
+    ["Sudah diposting", queue.filter((it) => it.post && !it.scheduled)],
+  ];
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex min-w-0 flex-col gap-5">
       <ErrorNote>{q.error?.message || d?.creatorError}</ErrorNote>
       {note && <p className="rounded-md border bg-card p-3 text-sm">{note}</p>}
-      <Card className="gap-3">
-        <CardHeader>
+
+      <Card className="gap-4">
+        <CardContent className="flex flex-col gap-4">
           <div className="flex min-w-0 items-center gap-3">
-            {c?.creator_avatar_url && <img src={c.creator_avatar_url} alt="" className="size-10 rounded-full" />}
-            <div className="min-w-0">
-              <CardTitle className="truncate">{d?.connected ? (c?.creator_nickname || d.user?.display_name || "Akun TikTok") : "Akun TikTok"}</CardTitle>
-              <CardDescription className="mt-1">
+            {avatar
+              ? <img src={avatar} alt="" className="size-12 shrink-0 rounded-full object-cover ring-2 ring-border" />
+              : <div className="grid size-12 shrink-0 place-items-center rounded-full bg-muted"><Music2 className="size-5 text-muted-foreground" /></div>}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-semibold">{name}</span>
+                {d?.connected && <Badge variant="success" className="hidden min-[380px]:inline-flex">Terhubung</Badge>}
+              </div>
+              <p className="truncate text-sm text-muted-foreground">
                 {!d ? "Memuat…" : !d.configured ? "Client key TikTok belum di-set di server." : d.connected
-                  ? `@${c?.creator_username ?? ""} · terhubung lewat GitGit Studio` : "Belum terhubung. Hubungkan akun TikTok yang akan diisi video."}
-              </CardDescription>
+                  ? `@${c?.creator_username ?? ""} · via GitGit Studio` : "Belum terhubung"}
+              </p>
             </div>
-          </div>
-          <CardAction className="flex gap-2">
-            {d?.connected
-              ? <Button variant="outline" size="sm" onClick={async () => { await api("/api/tiktok/disconnect", { method: "POST" }); refresh(); }}>Putuskan</Button>
-              : d?.configured && <Button size="sm" asChild><a href={`${BASE}/api/tiktok/login`}>Login with TikTok</a></Button>}
             <RefreshButton busy={q.isFetching} onClick={refresh} />
-          </CardAction>
-        </CardHeader>
-        {d?.connected && (
-          <CardContent className="text-xs text-muted-foreground">
-            Jadwal {d.slots?.join(", ")} WIB · maks {d.dailyCap} posting/hari{d.dailyCap === 1 ? " (akun baru, 14 hari pertama)" : ""}
-            {d.nextSlot && ` · slot kosong berikutnya ${when(d.nextSlot)}`}
-            {c?.max_video_post_duration_sec ? ` · durasi maks ${Math.floor(c.max_video_post_duration_sec / 60)} menit` : ""}
-          </CardContent>
-        )}
+          </div>
+
+          {d && !d.connected && d.configured && (
+            <div className="flex flex-col items-start gap-3 rounded-lg bg-muted/50 p-3 text-sm">
+              Hubungkan akun TikTok yang akan diisi video.
+              <Button size="sm" asChild><a href={`${BASE}/api/tiktok/login`}>Login with TikTok</a></Button>
+            </div>
+          )}
+
+          {d?.connected && (
+            <>
+              <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                <Info icon={Clock} label="Jadwal harian" value={`${d.slots?.join(" · ") ?? "-"} WIB`} />
+                <Info icon={CalendarClock} label="Slot kosong berikutnya" value={d.nextSlot ? when(d.nextSlot) : "Penuh"} />
+                <Info icon={Gauge} label="Batas posting" value={<>{d.dailyCap}/hari{d.dailyCap === 1 && <span className="font-normal text-muted-foreground"> · akun baru</span>}</>} />
+                {c?.max_video_post_duration_sec ? <Info icon={Timer} label="Durasi maks video" value={`${Math.floor(c.max_video_post_duration_sec / 60)} menit`} /> : null}
+              </div>
+              <div className="flex justify-end">
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={disconnect}><Unplug /> Putuskan akun</Button>
+              </div>
+            </>
+          )}
+        </CardContent>
       </Card>
 
-      <div>
-        <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Video siap diposting</h2>
-        <div className="flex flex-col gap-3">
-          {d?.queue.map((it) => {
-            const st = it.post ? STATUS[it.post.status] ?? [it.post.status, "secondary"] : null;
-            return (
-              <Card key={it.id} className="gap-3">
-                <CardHeader>
-                  <div className="min-w-0">
-                    <CardTitle className="truncate">{it.title}</CardTitle>
-                    <CardDescription className="mt-1">{it.id.slice(0, 8)} · {it.format} · {(it.size / 1048576).toFixed(1)} MB
-                      {it.post && ` · ${PRIVACY[it.post.privacy_level] ?? it.post.privacy_level}`}</CardDescription>
-                  </div>
-                  <CardAction className="flex items-center gap-2">
-                    {st && <Badge variant={st[1]}>{st[0]}</Badge>}
-                    {it.scheduled && <><Badge variant="warning">Terjadwal {when(it.scheduled)}</Badge>
-                      <Button variant="outline" size="sm" onClick={async () => { await api(`/api/tiktok/unschedule/${it.id}`, { method: "POST" }); refresh(); }}>Batal</Button></>}
-                    {it.post && it.post.status !== "PUBLISH_COMPLETE" && it.post.status !== "FAILED" &&
-                      <Button variant="outline" size="sm" onClick={() => check(it.id)}>Cek status</Button>}
-                    {d.connected && c && <Button variant={open === it.id ? "secondary" : "outline"} size="sm" onClick={() => setOpen(open === it.id ? null : it.id)}>
-                      {open === it.id ? "Tutup" : it.post ? "Posting lagi" : "Tinjau & posting"}</Button>}
-                  </CardAction>
-                </CardHeader>
-                {it.post?.fail_reason && <CardContent className="text-sm text-destructive">Gagal: {it.post.fail_reason}</CardContent>}
-                {open === it.id && c && <CardContent><Composer item={it} creator={c} nextSlot={d.nextSlot} onDone={refresh} /></CardContent>}
-              </Card>
-            );
-          })}
-          {d && !d.queue.length && <p className="text-sm text-muted-foreground">Belum ada video.</p>}
-        </div>
-      </div>
+      {groups.filter(([, items]) => items.length).map(([label, items]) => (
+        <section key={label} className="flex min-w-0 flex-col gap-3">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+            {label} <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{items.length}</span>
+          </h2>
+          {items.map((it) => (
+            <VideoRow key={it.id} it={it} d={d!} open={open === it.id} setOpen={(v) => setOpen(v ? it.id : null)} refresh={refresh} />
+          ))}
+        </section>
+      ))}
+      {d && !queue.length && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Belum ada video.</p>}
     </div>
   );
 }

@@ -29,7 +29,7 @@ export function SubTabs<T extends string>({ tabs, storageKey, active }: { tabs: 
 
   return (
     <div className="flex flex-col gap-5">
-      <div role="tablist" className="inline-flex w-fit gap-1 rounded-lg border bg-card p-1">
+      <div role="tablist" className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-lg border bg-card p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -37,7 +37,7 @@ export function SubTabs<T extends string>({ tabs, storageKey, active }: { tabs: 
             aria-selected={sub === t.id}
             onClick={() => pick(t.id)}
             className={cn(
-              "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
+              "inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 sm:px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
               sub === t.id && "bg-muted text-foreground",
             )}
           >
