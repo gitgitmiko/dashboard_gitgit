@@ -158,10 +158,14 @@ function dailyCap(data) {
   return Date.now() - since < WARMUP_DAYS * DAY ? 1 : SLOTS.length;
 }
 
+// Posts and slots of the account connected now only (each record keeps the open_id it was made for).
 function usedOn(data, day, except) {
+  const me = data.token?.open_id;
   const times = [];
-  for (const [id, p] of Object.entries(data.posts || {})) if (id !== except && p.status !== "FAILED" && dayKey(Date.parse(p.at)) === day) times.push(Date.parse(p.at));
-  for (const [id, q] of Object.entries(data.scheduled || {})) if (id !== except && dayKey(q.at) === day) times.push(q.at);
+  for (const [id, p] of Object.entries(data.posts || {})) {
+    if (id !== except && p.open_id === me && p.status !== "FAILED" && dayKey(Date.parse(p.at)) === day) times.push(Date.parse(p.at));
+  }
+  for (const [id, q] of Object.entries(data.scheduled || {})) if (id !== except && q.open_id === me && dayKey(q.at) === day) times.push(q.at);
   return times;
 }
 
@@ -269,7 +273,7 @@ export async function publish(id, input, fromSchedule = false) {
     await fh.close();
   }
   data.posts = data.posts || {};
-  data.posts[id] = { publish_id, status: "PROCESSING_UPLOAD", privacy_level: privacy, title, at: new Date().toISOString() };
+  data.posts[id] = { publish_id, status: "PROCESSING_UPLOAD", privacy_level: privacy, title, at: new Date().toISOString(), open_id: data.token.open_id };
   await save(data);
   return data.posts[id];
 }
@@ -309,7 +313,7 @@ export async function schedule(id, input) {
   const at = nextSlot(data, id);
   if (!at) throw fail(409, "Tidak ada slot kosong dalam 30 hari ke depan");
   data.scheduled = data.scheduled || {};
-  data.scheduled[id] = { at, input, approved_at: new Date().toISOString() };
+  data.scheduled[id] = { at, input, approved_at: new Date().toISOString(), open_id: data.token.open_id };
   await save(data);
   return { at: new Date(at).toISOString() };
 }
@@ -332,6 +336,8 @@ async function tick() {
       delete fresh.scheduled[id];  // taken off first, so a crash never posts it twice
       await save(fresh);
       try {
+        // approved for one account: never post it to another that was connected since
+        if (q.open_id && q.open_id !== fresh.token?.open_id) throw fail(409, "Akun TikTok yang terhubung berbeda dengan akun saat video ini disetujui");
         await publish(id, q.input, true);
         console.log(`tiktok: ${id} diposting sesuai jadwal`);
       } catch (e) {
