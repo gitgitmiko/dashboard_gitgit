@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>GitGit Studio</title>
+<link rel="icon" href="/gitgit-studio/assets/icon.png">
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#eef0f4; --muted:#9aa3b2; --accent:#f5a623; --red:#d22f3a; --ok:#3fbf6f; }
+  * { box-sizing: border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid var(--line); }
+  header img { width:36px; height:36px; border-radius:9px; }
+  header b { font-size:17px; } header span { color:var(--muted); font-size:13px; }
+  header .sp { flex:1; }
+  main { max-width:760px; margin:0 auto; padding:18px; display:flex; flex-direction:column; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  .row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .grow { flex:1; min-width:0; }
+  .muted { color:var(--muted); font-size:13px; }
+  h2 { font-size:14px; color:var(--muted); margin:6px 0 0; font-weight:600; }
+  h3 { margin:0; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  button, .btn { appearance:none; border:1px solid var(--line); background:#222733; color:var(--text); padding:9px 14px; border-radius:9px;
+    font:inherit; font-size:14px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; gap:8px; }
+  button.primary, .btn.primary { background:var(--text); color:#000; border-color:var(--text); font-weight:600; }
+  button.tiktok { background:#000; border-color:#444; font-weight:600; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .avatar { width:44px; height:44px; border-radius:50%; background:#333; }
+  .badge { font-size:12px; padding:2px 9px; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
+  .badge.ok { color:var(--ok); border-color:#2d6b45; } .badge.warn { color:var(--accent); border-color:#7a5a1e; } .badge.err { color:#ff6b74; border-color:#7a2a30; }
+  .composer { display:grid; gap:16px; margin-top:14px; grid-template-columns:1fr; }
+  @media (min-width:640px) { .composer { grid-template-columns:220px minmax(0,1fr); } }
+  video { width:100%; max-width:220px; aspect-ratio:9/16; background:#000; border-radius:12px; }
+  label.f { display:block; font-weight:600; font-size:14px; }
+  textarea, select, input[type=password] { width:100%; margin-top:6px; background:#0f1115; color:var(--text); border:1px solid var(--line);
+    border-radius:9px; padding:9px; font:inherit; font-size:14px; }
+  .checks { display:flex; flex-direction:column; gap:8px; font-size:14px; }
+  .checks label.off { opacity:.5; }
+  .box { border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .note { font-size:13px; color:var(--muted); overflow-wrap:anywhere; }
+  .msg { padding:12px; border-radius:10px; border:1px solid var(--line); background:#1d222c; overflow-wrap:anywhere; }
+  .err { color:#ff6b74; }
+  a { color:var(--accent); }
+  .login { max-width:360px; margin:12vh auto 0; }
+</style>
+</head>
+<body>
+<header>
+  <img src="/gitgit-studio/assets/icon.png" alt="">
+  <div><b>GitGit Studio</b><br><span>Post GitgitDev's animated videos to TikTok</span></div>
+  <div class="sp"></div>
+  <button id="logout" hidden>Sign out</button>
+</header>
+<main id="app"><p class="muted">Memuat…</p></main>
+<script>
+const $app = document.getElementById("app");
+const PRIVACY = { PUBLIC_TO_EVERYONE: "Public (everyone)", MUTUAL_FOLLOW_FRIENDS: "Friends (mutual followers)",
+  FOLLOWER_OF_CREATOR: "Followers", SELF_ONLY: "Only me (private)" };
+const STATUS = { PROCESSING_UPLOAD: ["Uploading", "warn"], PROCESSING_DOWNLOAD: ["Processing", "warn"],
+  SEND_TO_USER_INBOX: ["In inbox", ""], PUBLISH_COMPLETE: ["Posted", "ok"], FAILED: ["Failed", "err"] };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let state = null, open = null, flash = null;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { cache: "no-store", ...opts });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) { showLogin(); throw new Error("login"); }
+  if (!r.ok || d.ok === false) throw new Error(d.message || `HTTP ${r.status}`);
+  return d;
+}
+
+function showLogin(msg = "") {
+  document.getElementById("logout").hidden = true;
+  $app.innerHTML = `<form class="card login" id="lf">
+    <h3>Sign in to GitGit Studio</h3><p class="muted">GitgitDev internal panel.</p>
+    <label class="f">Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <p class="err">${esc(msg)}</p><button class="primary" type="submit">Sign in</button></form>`;
+  document.getElementById("lf").onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await fetch("/app/login", { method: "POST", body: new URLSearchParams(new FormData(e.target)) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) load(); else showLogin(r.status === 429 ? "Too many attempts, try again later." : "Wrong password.");
+  };
+}
+
+async function load() {
+  try { state = await api("/app/api/tiktok"); } catch (e) { if (e.message !== "login") $app.innerHTML = `<p class="msg err">${esc(e.message)}</p>`; return; }
+  document.getElementById("logout").hidden = false;
+  render();
+}
+
+function render() {
+  const d = state, c = d.creator;
+  const acct = d.connected
+    ? `<div class="row">${c?.creator_avatar_url ? `<img class="avatar" src="${esc(c.creator_avatar_url)}" alt="">` : ""}
+        <div class="grow"><h3>${esc(c?.creator_nickname || d.user?.display_name || "TikTok account")}</h3>
+        <div class="muted">@${esc(c?.creator_username || "")} · connected with Login with TikTok</div></div>
+        <button id="disc">Disconnect</button></div>
+        ${c?.max_video_post_duration_sec ? `<p class="note">Max video length for this account: ${Math.floor(c.max_video_post_duration_sec / 60)} min.</p>` : ""}`
+    : `<div class="row"><div class="grow"><h3>Connect your TikTok account</h3>
+        <div class="muted">GitGit Studio posts only to the account you connect, and only after you review each video.</div></div>
+        <a class="btn tiktok" href="/app/api/tiktok/login">Login with TikTok</a></div>`;
+  const items = d.queue.map((it) => {
+    const st = it.post && (STATUS[it.post.status] || [it.post.status, ""]);
+    return `<div class="card" id="v-${it.id}"><div class="row"><div class="grow"><h3>${esc(it.title)}</h3>
+      <div class="muted">${esc(it.format)} · ${(it.size / 1048576).toFixed(1)} MB${it.post ? " · " + esc(PRIVACY[it.post.privacy_level] || it.post.privacy_level) : ""}</div></div>
+      ${st ? `<span class="badge ${st[1]}">${st[0]}</span>` : ""}
+      ${it.post && !["PUBLISH_COMPLETE", "FAILED"].includes(it.post.status) ? `<button data-check="${it.id}">Check status</button>` : ""}
+      ${d.connected && c ? `<button data-open="${it.id}">${open === it.id ? "Close" : it.post ? "Post again" : "Review & post"}</button>` : ""}</div>
+      ${it.post?.fail_reason ? `<p class="err">Failed: ${esc(it.post.fail_reason)}</p>` : ""}
+      ${open === it.id && c ? composer(it, c) : ""}</div>`;
+  }).join("");
+  $app.innerHTML = `${flash ? `<div class="msg">${esc(flash)}</div>` : ""}${d.creatorError ? `<div class="msg err">${esc(d.creatorError)}</div>` : ""}
+    <div class="card">${acct}</div><h2>Videos ready to post</h2>${items || '<p class="muted">No videos yet.</p>'}`;
+  bind();
+}
+
+// TikTok Content Sharing Guidelines: creator nickname, preview, editable caption, privacy chosen by the user from the
+// creator's options (no default), interactions off by default and disabled when the creator turned them off,
+// commercial content disclosure, Music Usage Confirmation.
+function composer(it, c) {
+  const opt = (c.privacy_level_options || []).map((p) => `<option value="${p}">${esc(PRIVACY[p] || p)}</option>`).join("");
+  const chk = (k, label, off) => `<label class="${off ? "off" : ""}"><input type="checkbox" name="${k}" ${off ? "disabled" : ""}> ${label}${off ? " (turned off in your TikTok settings)" : ""}</label>`;
+  return `<form class="composer" data-id="${it.id}">
+    <video src="/app/api/tiktok/video/${it.id}" controls playsinline preload="metadata"></video>
+    <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+      <p class="muted" style="margin:0">Posting to <b style="color:var(--text)">${esc(c.creator_nickname || c.creator_username)}</b></p>
+      <label class="f">Caption<textarea name="caption" rows="4" maxlength="2200">${esc(it.caption)}</textarea></label>
+      <label class="f">Who can view this video<select name="privacy" required><option value="" selected disabled>Select privacy…</option>${opt}</select></label>
+      <div class="checks">${chk("comment", "Allow comments", c.comment_disabled)}${chk("duet", "Allow Duet", c.duet_disabled)}${chk("stitch", "Allow Stitch", c.stitch_disabled)}</div>
+      <div class="box checks"><label><input type="checkbox" name="disclose"> <b>Disclose video content</b> (promotional content)</label>
+        <div class="brand" hidden style="padding-left:24px;display:flex;flex-direction:column;gap:6px">
+          <label><input type="checkbox" name="own"> Your brand</label>
+          <label><input type="checkbox" name="paid"> Branded content</label>
+          <span class="note label"></span></div></div>
+      <p class="note consent"></p>
+      <div><button class="primary" type="submit" disabled>Post to TikTok</button></div>
+      <p class="note result"></p>
+    </div></form>`;
+}
+
+function bind() {
+  document.getElementById("disc")?.addEventListener("click", async () => { await api("/app/api/tiktok/disconnect", { method: "POST" }); load(); });
+  document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { open = open === b.dataset.open ? null : b.dataset.open; flash = null; render(); });
+  document.querySelectorAll("[data-check]").forEach((b) => b.onclick = async () => {
+    b.disabled = true;
+    try { await api(`/app/api/tiktok/status/${b.dataset.check}`, { method: "POST" }); } catch (e) { flash = e.message; }
+    load();
+  });
+  document.querySelectorAll("form.composer").forEach((f) => {
+    const btn = f.querySelector("button[type=submit]"), brand = f.querySelector(".brand");
+    const update = () => {
+      const disclose = f.disclose.checked, own = f.own.checked, paid = f.paid.checked, priv = f.privacy.value;
+      brand.hidden = !disclose;
+      f.querySelector(".label").textContent = !disclose ? "" : paid ? 'Your video will be labeled "Paid partnership".'
+        : own ? 'Your video will be labeled "Promotional content".' : "Select at least one option.";
+      const paidPrivate = disclose && paid && priv === "SELF_ONLY";
+      if (paidPrivate) f.querySelector(".label").textContent = 'Branded content cannot be posted as "Only me".';
+      f.querySelector(".consent").innerHTML = "By posting, you agree to TikTok's "
+        + (disclose && paid ? '<a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noopener">Branded Content Policy</a> and ' : "")
+        + '<a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Music Usage Confirmation</a>.';
+      btn.disabled = !priv || paidPrivate || (disclose && !own && !paid);
+    };
+    f.addEventListener("change", update);
+    update();
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      btn.disabled = true; btn.textContent = "Uploading…";
+      const res = f.querySelector(".result");
+      try {
+        await api(`/app/api/tiktok/publish/${f.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          title: f.caption.value, privacy_level: f.privacy.value, allow_comment: f.comment.checked, allow_duet: f.duet.checked, allow_stitch: f.stitch.checked,
+          brand_organic: f.disclose.checked && f.own.checked, brand_content: f.disclose.checked && f.paid.checked }) });
+        flash = "Sent to TikTok. Your video is being processed and usually appears on your profile within a few minutes.";
+        open = null; load();
+      } catch (err) { res.textContent = err.message; res.classList.add("err"); btn.textContent = "Post to TikTok"; update(); }
+    };
+  });
+}
+
+document.getElementById("logout").onclick = async () => { await fetch("/app/logout", { method: "POST" }); showLogin(); };
+const t = new URLSearchParams(location.search).get("tiktok");
+if (t) { flash = t === "ok" ? "Your TikTok account is connected." : t; history.replaceState(null, "", "/app/"); }
+load();
+</script>
+</body>
+</html>

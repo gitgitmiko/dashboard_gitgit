@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Camera, SquarePlay, Users } from "lucide-react";
+import { Camera, Music2, SquarePlay, Users } from "lucide-react";
 import { DateFilter, ErrText, ExtLink, PostBadge, Thumb } from "@/components/automation";
 import { SubTabs, type SubTabDef } from "@/components/subtabs";
 import { ErrorNote, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
@@ -10,6 +10,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, qs } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
+import { TikTok } from "@/pages/tiktok";
 import { Whatif } from "@/pages/whatif";
 
 type Slot = {
@@ -248,12 +249,13 @@ function MetaPosts({ platform, active }: { platform: string; active: boolean }) 
   );
 }
 
-const SUBTABS: SubTabDef<"instagram" | "facebook" | "youtube">[] = [
+const SUBTABS: SubTabDef<"instagram" | "facebook" | "youtube" | "tiktok">[] = [
   { id: "instagram", label: "Instagram", icon: Camera, Page: ({ active }) => <MetaPosts platform="instagram" active={active} /> },
   {
     id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => <MetaPosts platform="facebook" active={active} />,
   },
   { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Whatif },
+  { id: "tiktok", label: "TikTok", icon: Music2, Page: TikTok },
 ];
 export function Sosmed({ active }: { active: boolean }) {
   return <SubTabs tabs={SUBTABS} storageKey="dg-sosmed-tab" active={active} />;

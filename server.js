@@ -15,6 +15,8 @@ import { collectCleanup, killCleanup } from "./cleanup.js";
 import { remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
+import { callback as tiktokCallback, disconnect as tiktokDisconnect, loginUrl as tiktokLoginUrl, publish as tiktokPublish,
+  publishStatus as tiktokPublishStatus, tiktokStatus, videoPath as tiktokVideoPath } from "./tiktok.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1475,8 +1477,104 @@ function sendVideoStream(req, res, target, st, name, download) {
   createReadStream(target).pipe(res);
 }
 
+// ---------------------------------------------------------------- TikTok API (dashboard and GitGit Studio panel)
+async function tiktokApi(req, res, url, sub, { redirect, after }) {
+  try {
+    if (sub === "" && req.method === "GET") return sendJson(res, 200, { ok: true, ...(await tiktokStatus()) });
+    if (sub === "/login" && req.method === "GET") {
+      res.writeHead(302, { Location: tiktokLoginUrl(redirect), "Cache-Control": "no-store" });
+      return res.end();
+    }
+    if (sub === "/callback" && req.method === "GET") {
+      let note = "ok";
+      try { await tiktokCallback(url.searchParams); } catch (err) { note = encodeURIComponent(err.message); }
+      res.writeHead(302, { Location: after(note), "Cache-Control": "no-store" });
+      return res.end();
+    }
+    if (sub === "/disconnect" && req.method === "POST") {
+      await tiktokDisconnect();
+      return sendJson(res, 200, { ok: true });
+    }
+    const m = /^\/(video|publish|status)\/([a-z0-9-]+)$/.exec(sub);
+    if (m && m[1] === "video" && (req.method === "GET" || req.method === "HEAD")) {
+      const target = tiktokVideoPath(m[2]);
+      return sendVideoStream(req, res, target, await stat(target), `${m[2]}.mp4`, false);
+    }
+    if (m && m[1] === "publish" && req.method === "POST") {
+      return sendJson(res, 200, { ok: true, post: await tiktokPublish(m[2], JSON.parse((await readBody(req)) || "{}")) });
+    }
+    if (m && m[1] === "status" && req.method === "POST") return sendJson(res, 200, { ok: true, post: await tiktokPublishStatus(m[2]) });
+    throw httpError(404, "Tidak ditemukan");
+  } catch (err) {
+    return sendJson(res, err.status || 500, { ok: false, message: err.message });
+  }
+}
+
+// ---------------------------------------------------------------- GitGit Studio panel (https://studio.gitgitdev.my.id/app)
+// The public face of the TikTok integration, on the domain registered in the TikTok app. That host is not behind
+// Cloudflare Access, so it has its own password (STUDIO_PASSWORD), a login rate limit per IP, and its sessions
+// reach the TikTok endpoints only; nothing else of the dashboard is served there.
+const STUDIO_HOST = (process.env.STUDIO_HOST || "studio.gitgitdev.my.id").toLowerCase();
+const STUDIO_PAGE = join(dirname(fileURLToPath(import.meta.url)), "studio", "index.html");
+const studioSessions = new Map();
+const studioFails = new Map(); // ip -> { n, until }
+
+function studioPasswordOk(input) {
+  const expected = process.env.STUDIO_PASSWORD || "";
+  if (expected.length < 12) return false;
+  const a = createHash("sha256").update(String(input ?? ""), "utf8").digest();
+  const b = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(a, b);
+}
+
+function studioSession(req) {
+  const token = readCookie(req, "studio_session");
+  const row = token && studioSessions.get(token);
+  if (!row) return false;
+  if (row.expires < Date.now()) { studioSessions.delete(token); return false; }
+  return true;
+}
+
+async function studioRoute(req, res, url) {
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const ip = String(req.headers["cf-connecting-ip"] || req.socket.remoteAddress || "");
+  if (path === "/app" && (req.method === "GET" || req.method === "HEAD")) {
+    if (!url.pathname.endsWith("/")) { res.writeHead(301, { Location: `/app/${url.search}` }); return res.end(); }
+    return send(res, 200, await readFile(STUDIO_PAGE, "utf8"), {
+      "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; "
+        + "img-src 'self' https:; media-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "X-Frame-Options": "DENY", "Referrer-Policy": "strict-origin-when-cross-origin" });
+  }
+  if (path === "/app/login" && req.method === "POST") {
+    const f = studioFails.get(ip);
+    if (f && f.until > Date.now()) return sendJson(res, 429, { ok: false, message: "Terlalu banyak percobaan, coba lagi nanti" });
+    const params = new URLSearchParams(await readBody(req));
+    if (!studioPasswordOk(params.get("password"))) {
+      const n = (f && f.until > Date.now() - 15 * 60 * 1000 ? f.n : 0) + 1;
+      studioFails.set(ip, { n, until: n >= 5 ? Date.now() + 15 * 60 * 1000 : 0 });
+      console.log(`studio: login gagal dari ${ip} (${n})`);
+      return sendJson(res, 401, { ok: false, message: "Password salah" });
+    }
+    studioFails.delete(ip);
+    const token = randomBytes(24).toString("hex");
+    studioSessions.set(token, { expires: Date.now() + 12 * 3600 * 1000 });
+    return send(res, 200, JSON.stringify({ ok: true }), { "Content-Type": "application/json; charset=utf-8",
+      "Set-Cookie": `studio_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/app; Max-Age=${12 * 3600}` });
+  }
+  if (path === "/app/logout" && req.method === "POST") {
+    studioSessions.delete(readCookie(req, "studio_session"));
+    return send(res, 204, "", { "Set-Cookie": "studio_session=; HttpOnly; Secure; SameSite=Lax; Path=/app; Max-Age=0" });
+  }
+  const sub = path === "/app/callback" ? "/callback" : path.startsWith("/app/api/tiktok") ? path.slice("/app/api/tiktok".length) : null;
+  if (sub === null) return sendJson(res, 404, { ok: false, message: "Tidak ditemukan" });
+  if (!studioSession(req)) return sendJson(res, 401, { ok: false, message: "Belum masuk" });
+  return tiktokApi(req, res, url, sub, { redirect: `https://${STUDIO_HOST}/app/callback`, after: (note) => `/app/?tiktok=${note}` });
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
+  if (requestHost(req) === STUDIO_HOST) return studioRoute(req, res, url);
   let pathname = url.pathname;
   // dashboard.<domain>/x → BASE/v2/x (UI baru); BASE/... di host itu tidak diubah.
   if (isDashboardHost(req) && pathname !== BASE && !pathname.startsWith(`${BASE}/`)) pathname = `${BASE}/v2${pathname}`;
@@ -1712,6 +1810,13 @@ const server = createServer(async (req, res) => {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
+  }
+
+  // TikTok (GitGit Studio): connect an account, review and post videos. Module: tiktok.js
+  if (path.startsWith(`${base}/api/tiktok`)) {
+    if (!requireAuth(req, res)) return;
+    return tiktokApi(req, res, url, path.slice(`${base}/api/tiktok`.length),
+      { redirect: undefined, after: (note) => `/?tiktok=${note}#sosmed` });
   }
 
   if (path === `${base}/api/apps` && req.method === "GET") {

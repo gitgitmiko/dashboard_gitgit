@@ -39,5 +39,15 @@ Setelah masuk:
 - **CCTV** — rekaman per jam di `/mnt/cctv/<tanggal>/`; pilih tanggal, putar langsung di browser (bisa di-seek, endpoint mendukung HTTP Range), atau unduh.
 - **Sosmed** — satu sub-tab per platform, hanya akun yang sedang difokuskan (`SOSMED_FOCUS` di `server.js`: Instagram = @gitgit_infogame dan @kaidankakara, Facebook = @kaidankakara; statistik dihitung ulang dari riwayat akun itu):
   - **Instagram** / **Facebook** — status posting otomatis dari `scraper-data-gitgit` (jadwal hari ini, riwayat, link postingan, error), disaring per platform (`?platform=`). Data dibaca dari API `scraper-social-api`; isi `SOCIAL_API_KEY` (dan opsional `SOCIAL_API_URL`, default `http://172.18.0.1:8791`) di `.env`.
+  - **TikTok** — integrasi app TikTok for Developers "GitGit Studio" (modul `tiktok.js`): *Login with TikTok*, daftar video Kai & Kak Ara yang siap diposting, dan form tinjau-lalu-posting sesuai Content Sharing Guidelines TikTok (pratinjau, caption, privasi dipilih manual dari opsi akun, komentar/duet/stitch, pengungkapan konten komersial, Music Usage Confirmation), unggah langsung (Direct Post, FILE_UPLOAD) dan cek status. Isi `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` di `.env`; token disimpan di `~/.config/gitgit-studio/tiktok.json` (mode 600). Selama app belum lolos audit TikTok, akun harus privat dan video hanya bisa "Only me".
   - **YouTube** — pipeline "Apa yang terjadi jika" dari `whatif-automation` (jadwal, riwayat video, link preview publik, log service). Isi `WHATIF_API_TOKEN` (opsional `WHATIF_API_URL`, default `http://172.18.0.1:8798`) di `.env`.
 - **Apps and Games** (grup Produk) — aplikasi milik sendiri (modul `apps.js`, daftar di `APPS`). Untuk Valoid Hub: versi dari `app/build.gradle.kts`, commit sejak kartu Info developer terakhir, dan semua kartu yang sedang tayang di Firestore `announcements/`. **Buat draf Info developer** menjalankan `claude -p` (path `CLAUDE_BIN`, default `~/.local/bin/claude`) di repo aplikasi untuk menulis kartu dari commit; bila gagal memakai template dari judul commit. Draf bisa diedit, dipratinjau seperti di aplikasi, lalu **Posting ke Firestore** (atau **Hapus** kartu lama). Firestore diakses dengan login `firebase-tools` di server (`~/.config/configstore/firebase-tools.json`), sama seperti `tools/post_announcement.py` di valoid-mobile. API: `GET /api/apps`, `GET /api/apps/:id/icon`, `POST /api/apps/:id/draft`, `POST /api/apps/:id/announcements`, `POST /api/apps/:id/announcements/delete`.
+
+### Panel GitGit Studio (https://studio.gitgitdev.my.id/app)
+
+Wajah publik integrasi TikTok, di domain yang terdaftar di app TikTok (dipakai untuk video demo review). Tunnel
+meneruskan `studio.gitgitdev.my.id/app*` ke server ini; halaman `studio/index.html` + `/app/api/tiktok/*` +
+`/app/callback`. Host itu tidak di balik Cloudflare Access, jadi punya password sendiri (`STUDIO_PASSWORD` di `.env`,
+minimal 12 karakter), batas 5 percobaan login per IP per 15 menit, dan sesinya hanya bisa memakai endpoint TikTok.
+Redirect URI yang harus terdaftar di app TikTok: `https://studio.gitgitdev.my.id/app/callback` dan
+`https://dashboard.gitgitmiko.my.id/agen/api/tiktok/callback`.
