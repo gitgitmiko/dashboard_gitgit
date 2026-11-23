@@ -1253,6 +1253,49 @@ async function fetchSocial(endpoint, params) {
   return data;
 }
 
+// Akun yang jadi fokus per platform (2026-11-23): IG @gitgit_infogame dan FB @kaidankakara. Akun lain (InfoPol,
+// InfoCrypto, InfoSaham, InfoGame di FB, Kai & Kak Ara di IG) disembunyikan dari dashboard; posting otomatisnya
+// sendiri diatur di scraper-data-gitgit/social_accounts.json. Kosongkan daftar untuk menampilkan semua lagi.
+const SOSMED_FOCUS = { instagram: ["game"], facebook: ["kaiara"] };
+
+function focusOf(params) {
+  return SOSMED_FOCUS[params.get("platform") || ""] || null;
+}
+
+async function focusPosts(params) {
+  const keep = focusOf(params);
+  if (keep?.length && !keep.includes(params.get("account") || "")) {
+    if (params.get("account")) return { posts: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
+    if (keep.length === 1) params.set("account", keep[0]);
+  }
+  return fetchSocial("/posts", params);
+}
+
+/** Ringkasan sosmed hanya untuk akun fokus: statistik dihitung ulang dari riwayat posting akun-akun itu. */
+async function focusOverview(params) {
+  const ov = await fetchSocial("/overview", params);
+  const keep = focusOf(params);
+  if (!keep?.length) return ov;
+  ov.accounts = ov.accounts.filter((a) => keep.includes(a.key));
+  const today = String(ov.now || new Date().toISOString()).slice(0, 10);
+  const weekAgo = new Date(Date.parse(today) - 6 * 864e5).toISOString().slice(0, 10);
+  const stats = { today: { posted: 0, failed: 0, skipped: 0 }, week: { posted: 0, failed: 0, skipped: 0 } };
+  let last = null;
+  for (const a of ov.accounts) {
+    const q = new URLSearchParams({ platform: params.get("platform"), account: a.key, pageSize: "100" });
+    const { posts } = await fetchSocial("/posts", q);
+    for (const p of posts) {
+      if (p.date >= weekAgo && p.status in stats.week) stats.week[p.status] += 1;
+      if (p.date === today && p.status in stats.today) stats.today[p.status] += 1;
+      if (p.status === "posted" && (!last || p.updated_at > last.updated_at)) last = p;
+    }
+  }
+  const upcoming = ov.accounts
+    .filter((a) => a.enabled && a.connected)
+    .flatMap((a) => a.schedule.filter((x) => !x.past).map((x) => ({ at: `${today}T${x.time}`, account: a.key, kind: x.kind, label: x.label })));
+  return { ...ov, ...stats, last, next: upcoming.sort((x, y) => x.at.localeCompare(y.at))[0] || null };
+}
+
 async function fetchWhatif(endpoint, params) {
   if (!WHATIF_API_TOKEN) throw httpError(503, "WHATIF_API_TOKEN belum di-set di .env dashboard");
   const qs = new URLSearchParams();
@@ -1409,65 +1452,6 @@ function sendVideoStream(req, res, target, st, name, download) {
   res.writeHead(200, { ...headers, "Content-Length": st.size });
   if (req.method === "HEAD") { res.end(); return; }
   createReadStream(target).pipe(res);
-}
-
-// ---------------------------------------------------------------- Parodi anime (unggah manual ke FB Pro)
-// Video dibuat otomatis oleh ~/github-repos/parodi-anime (cron 2x sehari). API Facebook tidak bisa memposting ke
-// profil pribadi, jadi dashboard menyediakan unduhan video + caption untuk diunggah manual.
-const PARODI_DIR = join(HOME, "github-repos", "parodi-anime");
-const PARODI_RUNS = join(PARODI_DIR, "runs");
-const PARODI_ID_RE = /^[a-z0-9_]+-ep\d{2}$/;
-
-function parodiDir(id) {
-  if (!PARODI_ID_RE.test(String(id || ""))) throw httpError(400, "ID episode tidak valid");
-  return join(PARODI_RUNS, id);
-}
-
-async function readJsonFile(path) {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function parodiList() {
-  let names = [];
-  try {
-    names = (await readdir(PARODI_RUNS)).filter((n) => PARODI_ID_RE.test(n));
-  } catch {
-    return { episodes: [], producing: null, log: [] };
-  }
-  const episodes = [];
-  let producing = null;
-  for (const id of names) {
-    const d = join(PARODI_RUNS, id);
-    const script = await readJsonFile(join(d, "script.json"));
-    let st = null;
-    try { st = await stat(join(d, "final.mp4")); } catch { /* belum jadi */ }
-    if (!st) {
-      if (script || existsSync(join(d, "img"))) producing = { id, title: script?.judul || id };
-      continue;
-    }
-    let caption = "";
-    try { caption = await readFile(join(d, "caption.txt"), "utf8"); } catch { /* tanpa caption */ }
-    const tts = await readJsonFile(join(d, "tts.json"));
-    const up = await readJsonFile(join(d, "uploaded.json"));
-    const m = /^(.*)-ep(\d{2})$/.exec(id);
-    episodes.push({
-      id, series: m[1], ep: Number(m[2]), title: script?.judul || id, part_title: script?.part_title || "",
-      caption, seconds: tts?.total ?? null, size: st.size, created_at: st.mtime.toISOString(),
-      uploaded_at: up?.uploaded_at || null,
-    });
-  }
-  episodes.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
-  let log = [];
-  try {
-    log = (await readFile(join(PARODI_RUNS, "production.log"), "utf8")).trim().split("\n").slice(-6).reverse();
-  } catch { /* belum ada log */ }
-  // Folder setengah jadi = sedang diproduksi hanya bila baris log terakhir "mulai ..." (bukan sisa produksi gagal).
-  if (producing && !/ mulai /.test(log[0] || "")) producing = { ...producing, stalled: true };
-  return { episodes, producing, log, schedule: ["03:07", "15:37"] };
 }
 
 const server = createServer(async (req, res) => {
@@ -1844,54 +1828,9 @@ const server = createServer(async (req, res) => {
   if ((path === `${base}/api/sosmed/overview` || path === `${base}/api/sosmed/posts`) && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
-      sendJson(res, 200, { ok: true, ...(await fetchSocial(path.endsWith("/overview") ? "/overview" : "/posts", url.searchParams)) });
+      sendJson(res, 200, { ok: true, ...(await (path.endsWith("/overview") ? focusOverview(url.searchParams) : focusPosts(url.searchParams))) });
     } catch (err) {
       sendJson(res, err.status || 502, { ok: false, message: err.message });
-    }
-    return;
-  }
-
-  if (path === `${base}/api/parodi` && req.method === "GET") {
-    if (!requireAuth(req, res)) return;
-    try {
-      sendJson(res, 200, { ok: true, ...(await parodiList()) });
-    } catch (err) {
-      sendJson(res, err.status || 500, { ok: false, message: err.message });
-    }
-    return;
-  }
-  const parodiMatch = /^\/api\/parodi\/([a-z0-9_]+-ep\d{2})\/(video|thumb|uploaded)$/.exec(path.slice(base.length));
-  if (path.startsWith(base) && parodiMatch) {
-    if (!requireAuth(req, res)) return;
-    try {
-      const d = parodiDir(parodiMatch[1]);
-      if (parodiMatch[2] === "video" && (req.method === "GET" || req.method === "HEAD")) {
-        const target = join(d, "final.mp4");
-        let st;
-        try { st = await stat(target); } catch { throw httpError(404, "Video belum jadi"); }
-        const script = await readJsonFile(join(d, "script.json"));
-        const name = safeDownloadName(`${parodiMatch[1]}_${(script?.part_title || "parodi").replace(/[^\w-]+/g, "-")}.mp4`);
-        sendVideoStream(req, res, target, st, name, url.searchParams.get("download") === "1");
-        return;
-      }
-      if (parodiMatch[2] === "thumb" && req.method === "GET") {
-        const target = join(d, "img", "01.jpg");
-        if (!existsSync(target)) throw httpError(404, "Belum ada gambar");
-        res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=3600" });
-        createReadStream(target).pipe(res);
-        return;
-      }
-      if (parodiMatch[2] === "uploaded" && req.method === "POST") {
-        const body = JSON.parse((await readBody(req)) || "{}");
-        const f = join(d, "uploaded.json");
-        if (body.uploaded) await writeFile(f, JSON.stringify({ uploaded_at: new Date().toISOString() }));
-        else await rm(f, { force: true });
-        sendJson(res, 200, { ok: true });
-        return;
-      }
-      throw httpError(405, "Metode tidak didukung");
-    } catch (err) {
-      sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }
