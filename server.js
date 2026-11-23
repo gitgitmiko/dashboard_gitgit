@@ -16,7 +16,8 @@ import { remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 import { callback as tiktokCallback, disconnect as tiktokDisconnect, loginUrl as tiktokLoginUrl, publish as tiktokPublish,
-  publishStatus as tiktokPublishStatus, tiktokStatus, videoPath as tiktokVideoPath } from "./tiktok.js";
+  publishStatus as tiktokPublishStatus, schedule as tiktokSchedule, startScheduler as tiktokScheduler, tiktokStatus,
+  unschedule as tiktokUnschedule, videoPath as tiktokVideoPath } from "./tiktok.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1495,7 +1496,7 @@ async function tiktokApi(req, res, url, sub, { redirect, after }) {
       await tiktokDisconnect();
       return sendJson(res, 200, { ok: true });
     }
-    const m = /^\/(video|publish|status)\/([a-z0-9-]+)$/.exec(sub);
+    const m = /^\/(video|publish|status|schedule|unschedule)\/([a-z0-9-]+)$/.exec(sub);
     if (m && m[1] === "video" && (req.method === "GET" || req.method === "HEAD")) {
       const target = tiktokVideoPath(m[2]);
       return sendVideoStream(req, res, target, await stat(target), `${m[2]}.mp4`, false);
@@ -1504,6 +1505,10 @@ async function tiktokApi(req, res, url, sub, { redirect, after }) {
       return sendJson(res, 200, { ok: true, post: await tiktokPublish(m[2], JSON.parse((await readBody(req)) || "{}")) });
     }
     if (m && m[1] === "status" && req.method === "POST") return sendJson(res, 200, { ok: true, post: await tiktokPublishStatus(m[2]) });
+    if (m && m[1] === "schedule" && req.method === "POST") {
+      return sendJson(res, 200, { ok: true, ...(await tiktokSchedule(m[2], JSON.parse((await readBody(req)) || "{}"))) });
+    }
+    if (m && m[1] === "unschedule" && req.method === "POST") { await tiktokUnschedule(m[2]); return sendJson(res, 200, { ok: true }); }
     throw httpError(404, "Tidak ditemukan");
   } catch (err) {
     return sendJson(res, err.status || 500, { ok: false, message: err.message });
@@ -2091,6 +2096,7 @@ server.on("upgrade", (req, socket, head) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Dashboard listening on http://${HOST}:${PORT}${BASE}/`);
+  tiktokScheduler();
   // Sesi Remote Claude yang masih hidup dari sebelum restart disambungkan lagi, bukan dibuat baru.
   if (existsSync(PTY_BRIDGE) && existsSync(PYTHON)) {
     restoreRemoteSessions({ reposDir: REPOS_DIR, termSessions, createTermSession, maxTerm: MAX_TERM })

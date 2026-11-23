@@ -144,7 +144,40 @@ async function readJson(path) {
   }
 }
 
-const HASHTAGS = "#kaidankakara #videolucu #komedi #animasilucu #stickman";
+const HASHTAGS = "#kaidankakara #komedianimasi #kakakadik #animasilucu #stickman #fyp";
+// Approved videos go out at these times (WIB), at most one a day for a freshly connected account: TikTok flags new
+// accounts that post a lot through an API as inauthentic, so the first two weeks stay gentle.
+const SLOTS = (process.env.TIKTOK_SLOTS || "19:00,20:30,22:00").split(",").map((x) => x.trim()).filter((x) => /^\d\d:\d\d$/.test(x));
+const WARMUP_DAYS = 14;
+const DAY = 86400000;
+const dayKey = (ts) => new Date(ts + 7 * 3600000).toISOString().slice(0, 10);
+const slotTime = (day, hhmm) => Date.parse(`${day}T${hhmm}:00+07:00`);
+
+function dailyCap(data) {
+  const since = Date.parse(data.connected_at || 0);
+  return Date.now() - since < WARMUP_DAYS * DAY ? 1 : SLOTS.length;
+}
+
+function usedOn(data, day, except) {
+  const times = [];
+  for (const [id, p] of Object.entries(data.posts || {})) if (id !== except && p.status !== "FAILED" && dayKey(Date.parse(p.at)) === day) times.push(Date.parse(p.at));
+  for (const [id, q] of Object.entries(data.scheduled || {})) if (id !== except && dayKey(q.at) === day) times.push(q.at);
+  return times;
+}
+
+function nextSlot(data, except) {
+  const cap = dailyCap(data), now = Date.now();
+  for (let d = 0; d < 30; d++) {
+    const day = dayKey(now + d * DAY);
+    const used = usedOn(data, day, except);
+    if (used.length >= cap) continue;
+    for (const hhmm of SLOTS) {
+      const t = slotTime(day, hhmm);
+      if (t > now + 5 * 60000 && !used.includes(t)) return t;
+    }
+  }
+  return null;
+}
 
 async function queue(data) {
   let names = [];
@@ -157,10 +190,12 @@ async function queue(data) {
     const s = await readJson(join(RUNS, id, "script.json"));
     const st = await stat(join(RUNS, id, "final.mp4"));
     const title = s.judul || id;
+    const head = s.hook ? String(s.hook) : `${title.charAt(0).toUpperCase()}${title.slice(1)} 😂`;
     out.push({
       id, title, format: id.includes("-stick-") ? "stickman" : "format lama", size: st.size,
-      caption: `${title.charAt(0).toUpperCase()}${title.slice(1)} 😂 ${s.caption || ""}`.trim() + `\n\n${HASHTAGS}`,
+      caption: `${head}\n${s.caption || ""}`.trim() + `\n\n${HASHTAGS}`,
       post: data.posts?.[id] || null,
+      scheduled: data.scheduled?.[id] ? new Date(data.scheduled[id].at).toISOString() : null,
     });
   }
   return out;
@@ -168,7 +203,9 @@ async function queue(data) {
 
 export async function tiktokStatus() {
   const data = await load();
-  const base = { configured: configured(), connected: Boolean(data.token?.access_token), user: data.user || null };
+  const next = nextSlot(data);
+  const base = { configured: configured(), connected: Boolean(data.token?.access_token), user: data.user || null,
+    slots: SLOTS, dailyCap: dailyCap(data), nextSlot: next ? new Date(next).toISOString() : null };
   if (!base.connected) return { ...base, queue: await queue(data) };
   let creator = null, creatorError = null;
   try {
@@ -188,9 +225,12 @@ export function videoPath(id) {
 
 // Direct Post with FILE_UPLOAD: init gives an upload URL, the file goes up in chunks of 5-64 MB (a smaller file
 // in one piece), then TikTok processes it and the status endpoint reports PUBLISH_COMPLETE or FAILED.
-export async function publish(id, input) {
+export async function publish(id, input, fromSchedule = false) {
   const file = videoPath(id);
   const data = await load();
+  if (!fromSchedule && usedOn(data, dayKey(Date.now()), id).length >= dailyCap(data)) {
+    throw fail(429, `Batas ${dailyCap(data)} posting per hari untuk akun ini sudah tercapai (akun baru dibatasi ${WARMUP_DAYS} hari pertama); jadwalkan untuk slot berikutnya.`);
+  }
   const token = await accessToken(data);
   const creator = await creatorInfo(token);
   const privacy = String(input.privacy_level || "");
@@ -256,4 +296,65 @@ export async function disconnect() {
   delete data.token;
   delete data.user;
   await save(data);
+}
+
+// ---------------------------------------------------------------- schedule: approve now, post at the next free slot
+export async function schedule(id, input) {
+  videoPath(id);
+  const data = await load();
+  const token = await accessToken(data);
+  const creator = await creatorInfo(token);
+  if (!creator.privacy_level_options?.includes(String(input.privacy_level || ""))) throw fail(400, "Pilih tingkat privasi dari daftar yang diberikan TikTok");
+  if (input.brand_content && input.privacy_level === "SELF_ONLY") throw fail(400, "Konten bermerek tidak boleh berstatus privat (Only me)");
+  const at = nextSlot(data, id);
+  if (!at) throw fail(409, "Tidak ada slot kosong dalam 30 hari ke depan");
+  data.scheduled = data.scheduled || {};
+  data.scheduled[id] = { at, input, approved_at: new Date().toISOString() };
+  await save(data);
+  return { at: new Date(at).toISOString() };
+}
+
+export async function unschedule(id) {
+  const data = await load();
+  if (data.scheduled?.[id]) delete data.scheduled[id];
+  await save(data);
+}
+
+let ticking = false;
+async function tick() {
+  if (ticking || !configured()) return;
+  ticking = true;
+  try {
+    const data = await load();
+    const due = Object.entries(data.scheduled || {}).filter(([, q]) => q.at <= Date.now());
+    for (const [id, q] of due) {
+      const fresh = await load();
+      delete fresh.scheduled[id];  // taken off first, so a crash never posts it twice
+      await save(fresh);
+      try {
+        await publish(id, q.input, true);
+        console.log(`tiktok: ${id} diposting sesuai jadwal`);
+      } catch (e) {
+        const d = await load();
+        d.posts = d.posts || {};
+        d.posts[id] = { status: "FAILED", fail_reason: e.message, privacy_level: q.input.privacy_level, at: new Date().toISOString() };
+        await save(d);
+        console.error(`tiktok: ${id} gagal diposting: ${e.message}`);
+      }
+    }
+    // follow up recent uploads until TikTok reports the final status
+    for (const [id, p] of Object.entries((await load()).posts || {})) {
+      if (p.publish_id && /^PROCESSING/.test(p.status) && Date.now() - Date.parse(p.at) < 2 * 3600000) {
+        try { await publishStatus(id); } catch { /* try again next minute */ }
+      }
+    }
+  } catch (e) {
+    console.error("tiktok scheduler:", e.message);
+  } finally {
+    ticking = false;
+  }
+}
+
+export function startScheduler() {
+  setInterval(tick, 60000).unref();
 }

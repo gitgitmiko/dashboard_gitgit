@@ -18,11 +18,14 @@ type Creator = {
   max_video_post_duration_sec?: number;
 };
 type Post = { publish_id: string; status: string; privacy_level: string; at: string; fail_reason?: string | null; post_ids?: string[] };
-type Item = { id: string; title: string; format: string; size: number; caption: string; post: Post | null };
+type Item = { id: string; title: string; format: string; size: number; caption: string; post: Post | null; scheduled: string | null };
 type Status = {
   configured: boolean; connected: boolean; user: { display_name?: string; avatar_url?: string } | null;
   creator?: Creator | null; creatorError?: string | null; queue: Item[];
+  slots?: string[]; dailyCap?: number; nextSlot?: string | null;
 };
+
+const when = (iso: string) => new Date(iso).toLocaleString("id-ID", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }) + " WIB";
 
 const PRIVACY: Record<string, string> = {
   PUBLIC_TO_EVERYONE: "Publik (semua orang)", MUTUAL_FOLLOW_FRIENDS: "Teman (saling mengikuti)",
@@ -33,7 +36,7 @@ const STATUS: Record<string, [string, "success" | "warning" | "destructive" | "s
   SEND_TO_USER_INBOX: ["Di inbox", "secondary"], PUBLISH_COMPLETE: ["Terposting", "success"], FAILED: ["Gagal", "destructive"],
 };
 
-function Composer({ item, creator, onDone }: { item: Item; creator: Creator; onDone: () => void }) {
+function Composer({ item, creator, nextSlot, onDone }: { item: Item; creator: Creator; nextSlot?: string | null; onDone: () => void }) {
   const [title, setTitle] = useState(item.caption);
   const [privacy, setPrivacy] = useState("");
   const [allow, setAllow] = useState({ comment: false, duet: false, stitch: false });
@@ -43,16 +46,17 @@ function Composer({ item, creator, onDone }: { item: Item; creator: Creator; onD
   const [msg, setMsg] = useState<string | null>(null);
   const paidPrivate = disclose && brand.paid && privacy === "SELF_ONLY";
   const ready = privacy && !paidPrivate && (!disclose || brand.own || brand.paid) && !busy;
-  const post = async () => {
+  const post = async (mode: "publish" | "schedule") => {
     setBusy(true);
     setMsg(null);
     try {
-      await api(`/api/tiktok/publish/${item.id}`, {
+      const r = await api<{ at?: string }>(`/api/tiktok/${mode}/${item.id}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, privacy_level: privacy, allow_comment: allow.comment, allow_duet: allow.duet, allow_stitch: allow.stitch,
           brand_organic: disclose && brand.own, brand_content: disclose && brand.paid }),
       });
-      setMsg("Terkirim ke TikTok. Video sedang diproses dan biasanya muncul di profil dalam beberapa menit.");
+      setMsg(mode === "publish" ? "Terkirim ke TikTok. Video sedang diproses dan biasanya muncul di profil dalam beberapa menit."
+        : `Disetujui. Akan diposting ${r.at ? when(r.at) : "di slot berikutnya"}.`);
       onDone();
     } catch (e) {
       setMsg((e as Error).message);
@@ -107,7 +111,10 @@ function Composer({ item, creator, onDone }: { item: Item; creator: Creator; onD
           <a className="underline" href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Konfirmasi Penggunaan Musik</a> TikTok.
         </p>
         <div className="flex flex-col items-start gap-2">
-          <Button onClick={post} disabled={!ready}>{busy ? "Mengunggah…" : "Posting ke TikTok"}</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => post("publish")} disabled={!ready}>{busy ? "Mengirim…" : "Posting sekarang"}</Button>
+            <Button variant="outline" onClick={() => post("schedule")} disabled={!ready || !nextSlot}>Jadwalkan{nextSlot ? ` (${when(nextSlot)})` : ""}</Button>
+          </div>
           {msg && <span className="text-sm break-words text-muted-foreground [overflow-wrap:anywhere]">{msg}</span>}
         </div>
       </div>
@@ -156,8 +163,12 @@ export function TikTok({ active }: { active: boolean }) {
             <RefreshButton busy={q.isFetching} onClick={refresh} />
           </CardAction>
         </CardHeader>
-        {d?.connected && c?.max_video_post_duration_sec && (
-          <CardContent className="text-xs text-muted-foreground">Durasi video maksimal untuk akun ini: {Math.floor(c.max_video_post_duration_sec / 60)} menit.</CardContent>
+        {d?.connected && (
+          <CardContent className="text-xs text-muted-foreground">
+            Jadwal {d.slots?.join(", ")} WIB · maks {d.dailyCap} posting/hari{d.dailyCap === 1 ? " (akun baru, 14 hari pertama)" : ""}
+            {d.nextSlot && ` · slot kosong berikutnya ${when(d.nextSlot)}`}
+            {c?.max_video_post_duration_sec ? ` · durasi maks ${Math.floor(c.max_video_post_duration_sec / 60)} menit` : ""}
+          </CardContent>
         )}
       </Card>
 
@@ -176,6 +187,8 @@ export function TikTok({ active }: { active: boolean }) {
                   </div>
                   <CardAction className="flex items-center gap-2">
                     {st && <Badge variant={st[1]}>{st[0]}</Badge>}
+                    {it.scheduled && <><Badge variant="warning">Terjadwal {when(it.scheduled)}</Badge>
+                      <Button variant="outline" size="sm" onClick={async () => { await api(`/api/tiktok/unschedule/${it.id}`, { method: "POST" }); refresh(); }}>Batal</Button></>}
                     {it.post && it.post.status !== "PUBLISH_COMPLETE" && it.post.status !== "FAILED" &&
                       <Button variant="outline" size="sm" onClick={() => check(it.id)}>Cek status</Button>}
                     {d.connected && c && <Button variant={open === it.id ? "secondary" : "outline"} size="sm" onClick={() => setOpen(open === it.id ? null : it.id)}>
@@ -183,7 +196,7 @@ export function TikTok({ active }: { active: boolean }) {
                   </CardAction>
                 </CardHeader>
                 {it.post?.fail_reason && <CardContent className="text-sm text-destructive">Gagal: {it.post.fail_reason}</CardContent>}
-                {open === it.id && c && <CardContent><Composer item={it} creator={c} onDone={refresh} /></CardContent>}
+                {open === it.id && c && <CardContent><Composer item={it} creator={c} nextSlot={d.nextSlot} onDone={refresh} /></CardContent>}
               </Card>
             );
           })}

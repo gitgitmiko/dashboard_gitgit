@@ -60,6 +60,7 @@ const PRIVACY = { PUBLIC_TO_EVERYONE: "Public (everyone)", MUTUAL_FOLLOW_FRIENDS
   FOLLOWER_OF_CREATOR: "Followers", SELF_ONLY: "Only me (private)" };
 const STATUS = { PROCESSING_UPLOAD: ["Uploading", "warn"], PROCESSING_DOWNLOAD: ["Processing", "warn"],
   SEND_TO_USER_INBOX: ["In inbox", ""], PUBLISH_COMPLETE: ["Posted", "ok"], FAILED: ["Failed", "err"] };
+const when = (iso) => new Date(iso).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }) + " WIB";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 let state = null, open = null, flash = null;
 
@@ -98,7 +99,8 @@ function render() {
         <div class="grow"><h3>${esc(c?.creator_nickname || d.user?.display_name || "TikTok account")}</h3>
         <div class="muted">@${esc(c?.creator_username || "")} · connected with Login with TikTok</div></div>
         <button id="disc">Disconnect</button></div>
-        ${c?.max_video_post_duration_sec ? `<p class="note">Max video length for this account: ${Math.floor(c.max_video_post_duration_sec / 60)} min.</p>` : ""}`
+        ${c?.max_video_post_duration_sec ? `<p class="note">Max video length for this account: ${Math.floor(c.max_video_post_duration_sec / 60)} min.</p>` : ""}
+        <p class="note">Schedule: ${esc((d.slots || []).join(", "))} WIB · up to ${d.dailyCap} post${d.dailyCap > 1 ? "s" : ""} a day${d.dailyCap === 1 ? " (new account, first 14 days)" : ""}${d.nextSlot ? ` · next free slot: ${esc(when(d.nextSlot))}` : ""}</p>`
     : `<div class="row"><div class="grow"><h3>Connect your TikTok account</h3>
         <div class="muted">GitGit Studio posts only to the account you connect, and only after you review each video.</div></div>
         <a class="btn tiktok" href="/app/api/tiktok/login">Login with TikTok</a></div>`;
@@ -107,6 +109,7 @@ function render() {
     return `<div class="card" id="v-${it.id}"><div class="row"><div class="grow"><h3>${esc(it.title)}</h3>
       <div class="muted">${esc(it.format)} · ${(it.size / 1048576).toFixed(1)} MB${it.post ? " · " + esc(PRIVACY[it.post.privacy_level] || it.post.privacy_level) : ""}</div></div>
       ${st ? `<span class="badge ${st[1]}">${st[0]}</span>` : ""}
+      ${it.scheduled ? `<span class="badge warn">Scheduled ${esc(when(it.scheduled))}</span><button data-unsched="${it.id}">Cancel</button>` : ""}
       ${it.post && !["PUBLISH_COMPLETE", "FAILED"].includes(it.post.status) ? `<button data-check="${it.id}">Check status</button>` : ""}
       ${d.connected && c ? `<button data-open="${it.id}">${open === it.id ? "Close" : it.post ? "Post again" : "Review & post"}</button>` : ""}</div>
       ${it.post?.fail_reason ? `<p class="err">Failed: ${esc(it.post.fail_reason)}</p>` : ""}
@@ -136,7 +139,8 @@ function composer(it, c) {
           <label><input type="checkbox" name="paid"> Branded content</label>
           <span class="note label"></span></div></div>
       <p class="note consent"></p>
-      <div><button class="primary" type="submit" disabled>Post to TikTok</button></div>
+      <div class="row"><button class="primary" type="submit" disabled>Post now</button>
+        <button type="button" class="sched" disabled>Schedule${state.nextSlot ? " for " + esc(when(state.nextSlot)) : ""}</button></div>
       <p class="note result"></p>
     </div></form>`;
 }
@@ -144,13 +148,16 @@ function composer(it, c) {
 function bind() {
   document.getElementById("disc")?.addEventListener("click", async () => { await api("/app/api/tiktok/disconnect", { method: "POST" }); load(); });
   document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { open = open === b.dataset.open ? null : b.dataset.open; flash = null; render(); });
+  document.querySelectorAll("[data-unsched]").forEach((b) => b.onclick = async () => {
+    await api(`/app/api/tiktok/unschedule/${b.dataset.unsched}`, { method: "POST" }); load();
+  });
   document.querySelectorAll("[data-check]").forEach((b) => b.onclick = async () => {
     b.disabled = true;
     try { await api(`/app/api/tiktok/status/${b.dataset.check}`, { method: "POST" }); } catch (e) { flash = e.message; }
     load();
   });
   document.querySelectorAll("form.composer").forEach((f) => {
-    const btn = f.querySelector("button[type=submit]"), brand = f.querySelector(".brand");
+    const btn = f.querySelector("button[type=submit]"), sched = f.querySelector("button.sched"), brand = f.querySelector(".brand");
     const update = () => {
       const disclose = f.disclose.checked, own = f.own.checked, paid = f.paid.checked, priv = f.privacy.value;
       brand.hidden = !disclose;
@@ -162,21 +169,25 @@ function bind() {
         + (disclose && paid ? '<a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noopener">Branded Content Policy</a> and ' : "")
         + '<a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Music Usage Confirmation</a>.';
       btn.disabled = !priv || paidPrivate || (disclose && !own && !paid);
+      sched.disabled = btn.disabled || !state.nextSlot;
     };
     f.addEventListener("change", update);
     update();
-    f.onsubmit = async (e) => {
-      e.preventDefault();
-      btn.disabled = true; btn.textContent = "Uploading…";
+    const send = async (mode) => {
+      btn.disabled = sched.disabled = true;
+      (mode === "publish" ? btn : sched).textContent = mode === "publish" ? "Uploading…" : "Scheduling…";
       const res = f.querySelector(".result");
       try {
-        await api(`/app/api/tiktok/publish/${f.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        const r = await api(`/app/api/tiktok/${mode}/${f.dataset.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
           title: f.caption.value, privacy_level: f.privacy.value, allow_comment: f.comment.checked, allow_duet: f.duet.checked, allow_stitch: f.stitch.checked,
           brand_organic: f.disclose.checked && f.own.checked, brand_content: f.disclose.checked && f.paid.checked }) });
-        flash = "Sent to TikTok. Your video is being processed and usually appears on your profile within a few minutes.";
+        flash = mode === "publish" ? "Sent to TikTok. Your video is being processed and usually appears on your profile within a few minutes."
+          : `Approved. It will be posted to TikTok on ${when(r.at)}.`;
         open = null; load();
-      } catch (err) { res.textContent = err.message; res.classList.add("err"); btn.textContent = "Post to TikTok"; update(); }
+      } catch (err) { res.textContent = err.message; res.classList.add("err"); btn.textContent = "Post now"; sched.textContent = "Schedule"; update(); }
     };
+    f.onsubmit = (e) => { e.preventDefault(); send("publish"); };
+    sched.onclick = () => send("schedule");
   });
 }
 
