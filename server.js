@@ -1253,10 +1253,10 @@ async function fetchSocial(endpoint, params) {
   return data;
 }
 
-// Akun yang jadi fokus per platform (2026-11-23): IG @gitgit_infogame dan FB @kaidankakara. Akun lain (InfoPol,
-// InfoCrypto, InfoSaham, InfoGame di FB, Kai & Kak Ara di IG) disembunyikan dari dashboard; posting otomatisnya
-// sendiri diatur di scraper-data-gitgit/social_accounts.json. Kosongkan daftar untuk menampilkan semua lagi.
-const SOSMED_FOCUS = { instagram: ["game"], facebook: ["kaiara"] };
+// Akun yang jadi fokus per platform (2026-11-23): IG @gitgit_infogame dan @kaidankakara, FB @kaidankakara. Akun
+// lain (InfoPol, InfoCrypto, InfoSaham) disembunyikan dari dashboard; posting otomatisnya sendiri diatur di
+// scraper-data-gitgit/social_accounts.json. Kosongkan daftar untuk menampilkan semua lagi.
+const SOSMED_FOCUS = { instagram: ["game", "kaiara"], facebook: ["kaiara"] };
 
 function focusOf(params) {
   return SOSMED_FOCUS[params.get("platform") || ""] || null;
@@ -1264,11 +1264,32 @@ function focusOf(params) {
 
 async function focusPosts(params) {
   const keep = focusOf(params);
-  if (keep?.length && !keep.includes(params.get("account") || "")) {
-    if (params.get("account")) return { posts: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
-    if (keep.length === 1) params.set("account", keep[0]);
+  if (!keep?.length || keep.includes(params.get("account") || "")) return fetchSocial("/posts", params);
+  if (params.get("account")) return { posts: [], total: 0, page: 1, pageSize: 10, totalPages: 1 };
+  if (keep.length === 1) {
+    params.set("account", keep[0]);
+    return fetchSocial("/posts", params);
   }
-  return fetchSocial("/posts", params);
+  // Several focus accounts: the API filters one account at a time, so read enough of each, newest first, and page
+  // through the merged list here.
+  const size = Number(params.get("pageSize")) || 10;
+  const page = Math.max(1, Number(params.get("page")) || 1);
+  const need = page * size;
+  let all = [], total = 0;
+  for (const account of keep) {
+    for (let p = 1; ; p++) {
+      const q = new URLSearchParams(params);
+      q.set("account", account); q.set("pageSize", "100"); q.set("page", String(p));
+      const r = await fetchSocial("/posts", q);
+      if (p === 1) total += r.total;
+      all = all.concat(r.posts);
+      if (p >= r.totalPages || p * 100 >= need) break;
+    }
+  }
+  all.sort((a, b) => b.id - a.id);
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  const pg = Math.min(page, totalPages);
+  return { posts: all.slice((pg - 1) * size, pg * size), total, page: pg, pageSize: size, totalPages };
 }
 
 /** Ringkasan sosmed hanya untuk akun fokus: statistik dihitung ulang dari riwayat posting akun-akun itu. */
