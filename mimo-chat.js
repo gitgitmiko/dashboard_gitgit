@@ -8,9 +8,11 @@ import { exec } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { recordUsage } from "./mimo-usage.js";
 
 const HOME = homedir();
@@ -20,7 +22,11 @@ export const MODELS = { pro: "mimo-v2.6-pro", flash: "mimo-v2.6-flash" };
 const MAX_STEPS = 80;           // model calls per message before it must stop and report
 const TOOL_OUT = 30_000;        // characters of a tool result the model sees
 const SHOW_OUT = 4_000;         // characters of a tool result the page shows
-const CONTEXT_CHARS = 450_000;  // past this, old tool results are shortened before the next call
+const CONTEXT_CHARS = 220_000;  // past this, old tool results are shortened before the next call
+export const UPLOADS = join(STORE, "_uploads");  // files attached in the chat, per repo
+const MAX_UPLOAD = 25 * 1024 * 1024;
+const IMG_MAX = 4 * 1024 * 1024;  // images up to this size are shown to the model itself, not just their path
+const IMG_MIME = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" };
 
 function apiKey() {
   if (process.env.MIMO_API_KEY) return process.env.MIMO_API_KEY;
@@ -60,6 +66,11 @@ const TOOLS = [
     name: "find_files",
     description: "Find files by name glob, e.g. '*.tsx' or 'src/**/test*'.",
     parameters: { type: "object", properties: { glob: { type: "string" }, path: { type: "string" } }, required: ["glob"] },
+  },
+  {
+    name: "view_image",
+    description: "Look at an image file (png/jpg/webp/gif) on the server, e.g. a screenshot, a rendered frame or an attached picture.",
+    parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
   },
   {
     name: "bash",
@@ -133,6 +144,14 @@ async function runTool(name, args, repoPath, signal) {
         : `find ${q(p(args.path))} -path '*/node_modules' -prune -o -path '*/.git' -prune -o -name ${q(g)} -print | head -300`;
       const r = await sh(cmd, repoPath, 60_000, signal);
       return { ok: true, out: r.out };
+    }
+    case "view_image": {
+      const file = p(args.path);
+      const mime = IMG_MIME[extname(file).toLowerCase()];
+      if (!mime) return { ok: false, out: "Bukan gambar png/jpg/webp/gif" };
+      const st = await stat(file);
+      if (st.size > IMG_MAX) return { ok: false, out: `Gambar terlalu besar (${st.size} byte); kecilkan dulu, mis. ffmpeg -i in -vf scale=800:-1 /tmp/kecil.jpg` };
+      return { ok: true, out: `Gambar ${file} ditampilkan di pesan berikutnya.`, image: `data:${mime};base64,${(await readFile(file)).toString("base64")}` };
     }
     case "bash": {
       const secs = Math.min(Math.max(Number(args.timeout) || 120, 1), 600);
@@ -221,8 +240,20 @@ Status git saat percakapan dimulai:
 ${git.out}${notes}`;
 }
 
+const lenOf = (m) => (Array.isArray(m.content) ? m.content.reduce((n, c) => n + (c.text?.length || 0) + (c.image_url ? 4000 : 0), 0) : m.content?.length || 0)
+  + JSON.stringify(m.tool_calls || "").length;
+
+/** Pictures are shown to the model once: from an earlier turn they are replaced by their path. */
+function dropOldImages(messages) {
+  for (const m of messages) {
+    if (!Array.isArray(m.content)) continue;
+    m.content = m.content.map((c) => (c.type === "image_url" ? { type: "text", text: `[gambar sudah dilihat${c.path ? `: ${c.path}` : ""}; pakai view_image untuk melihat lagi]` } : c));
+    if (m.content.every((c) => c.type === "text")) m.content = m.content.map((c) => c.text).join("\n");
+  }
+}
+
 function shrinkContext(messages) {
-  let total = messages.reduce((n, m) => n + (m.content?.length || 0) + JSON.stringify(m.tool_calls || "").length, 0);
+  let total = messages.reduce((n, m) => n + lenOf(m), 0);
   for (let i = 1; i < messages.length - 6 && total > CONTEXT_CHARS; i++) {
     const m = messages[i];
     if (m.role === "tool" && m.content.length > 600) {
@@ -296,7 +327,8 @@ async function agentLoop(conv, repo, signal, emit) {
   for (let step = 0; step < MAX_STEPS; step++) {
     shrinkContext(conv.messages);
     // reasoning stays out of what is sent back: only the answer and the tool calls are history
-    const history = conv.messages.map(({ reasoning_content, ...m }) => m);
+    const history = conv.messages.map(({ reasoning_content, ...m }) =>
+      Array.isArray(m.content) ? { ...m, content: m.content.map(({ path, ...c }) => c) } : m);
     let live = null;
     const { msg, usage } = await callModel(model, history, signal, (kind, text) => {
       if (!live || live.t !== kind) {
@@ -314,6 +346,7 @@ async function agentLoop(conv, repo, signal, emit) {
     }
     conv.messages.push(msg);
     if (!msg.tool_calls?.length) return;
+    const seen = [];
     for (const call of msg.tool_calls) {
       let args = {};
       try {
@@ -336,15 +369,62 @@ async function agentLoop(conv, repo, signal, emit) {
       if (call.function.name === "edit_file" && args) ev.diff = { old: clip(String(args.old_text ?? ""), 1500), new: clip(String(args.new_text ?? ""), 1500) };
       emit({ type: "event", index: at, event: ev });
       conv.messages.push({ role: "tool", tool_call_id: call.id, content: clip(r.out, TOOL_OUT) });
+      if (r.image) seen.push({ type: "image_url", image_url: { url: r.image }, path: args.path });
       if (signal.aborted) return;
+    }
+    if (seen.length) {
+      dropOldImages(conv.messages);
+      conv.messages.push({ role: "user", content: [{ type: "text", text: "Gambar yang diminta lewat view_image:" }, ...seen] });
     }
     await save(conv);
   }
   conv.events.push({ t: "text", text: `\n\n_(Berhenti setelah ${MAX_STEPS} langkah. Kirim "lanjut" untuk meneruskan.)_` });
 }
 
-export async function sendMessage({ repo, id, text, model }) {
-  if (!String(text || "").trim()) throw Object.assign(new Error("Pesan kosong"), { status: 400 });
+/** Save a file attached in the chat; returns what /send takes in attachments. */
+export async function saveUpload(req, repoName, name) {
+  const clean = basename(String(name || "file")).replace(/[^\w.\- ()]/g, "_").slice(-120) || "file";
+  const dir = join(UPLOADS, safe(repoName));
+  await mkdir(dir, { recursive: true });
+  const file = join(dir, `${Date.now().toString(36)}-${clean}`);
+  let size = 0;
+  const limit = new (await import("node:stream")).Transform({
+    transform(chunk, _e, cb) {
+      size += chunk.length;
+      cb(size > MAX_UPLOAD ? Object.assign(new Error("File maksimal 25 MB"), { status: 413 }) : null, chunk);
+    },
+  });
+  try {
+    await pipeline(req, limit, createWriteStream(file, { mode: 0o600 }));
+  } catch (err) {
+    await rm(file, { force: true });
+    throw err;
+  }
+  return { path: file, name: clean, size, image: Boolean(IMG_MIME[extname(clean).toLowerCase()]) };
+}
+
+/** An attachment may only point into the uploads folder of that repo. */
+function attachmentPath(repoName, a) {
+  const file = resolve(String(a?.path || ""));
+  if (!file.startsWith(join(UPLOADS, safe(repoName)) + "/") || !existsSync(file)) throw Object.assign(new Error("Lampiran tidak valid"), { status: 400 });
+  return file;
+}
+
+export function uploadedFile(path) {
+  const file = resolve(String(path || ""));
+  if (!file.startsWith(UPLOADS + "/") || !existsSync(file)) throw Object.assign(new Error("File tidak ada"), { status: 404 });
+  return { file, mime: IMG_MIME[extname(file).toLowerCase()] || "application/octet-stream" };
+}
+
+export async function sendMessage({ repo, id, text, model, attachments = [] }) {
+  const files = [];
+  for (const a of (Array.isArray(attachments) ? attachments : []).slice(0, 10)) {
+    const file = attachmentPath(repo.name, a);
+    const st = await stat(file);
+    files.push({ path: file, name: basename(file).replace(/^[a-z0-9]+-/, ""), size: st.size, image: Boolean(IMG_MIME[extname(file).toLowerCase()]) });
+  }
+  if (!String(text || "").trim() && !files.length) throw Object.assign(new Error("Pesan kosong"), { status: 400 });
+  text = String(text || "").trim() || "Lihat file terlampir.";
   let conv = id ? await load(repo.name, id) : null;
   if (id && !conv) throw Object.assign(new Error("Percakapan tidak ada"), { status: 404 });
   if (!conv) {
@@ -354,8 +434,16 @@ export async function sendMessage({ repo, id, text, model }) {
   const key = `${repo.name}/${conv.id}`;
   if (runs.has(key)) throw Object.assign(new Error("MiMo masih mengerjakan pesan sebelumnya"), { status: 409 });
   if (model in MODELS) conv.model = model;
-  conv.messages.push({ role: "user", content: text });
-  conv.events.push({ t: "user", text, model: conv.model });
+  if (files.length) {
+    dropOldImages(conv.messages);
+    const list = files.map((f) => `- ${f.path} (${f.name}, ${Math.ceil(f.size / 1024)} KB)`).join("\n");
+    const parts = [{ type: "text", text: `${text}\n\nFile terlampir (sudah tersimpan di server):\n${list}` }];
+    for (const f of files) {
+      if (f.image && f.size <= IMG_MAX) parts.push({ type: "image_url", image_url: { url: `data:${IMG_MIME[extname(f.path).toLowerCase()]};base64,${(await readFile(f.path)).toString("base64")}` }, path: f.path });
+    }
+    conv.messages.push({ role: "user", content: parts });
+  } else conv.messages.push({ role: "user", content: text });
+  conv.events.push({ t: "user", text, model: conv.model, ...(files.length ? { files } : {}) });
   conv.updated = Date.now();
   await save(conv);
 

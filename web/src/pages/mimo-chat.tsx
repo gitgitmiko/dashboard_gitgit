@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Brain, Check, ChevronRight, FilePen, FilePlus, FileText, FolderTree, GitBranch, LoaderCircle, MessageSquarePlus,
-  BarChart3, Search, SendHorizontal, Sparkles, Square, SquareTerminal, Trash2, TriangleAlert, X,
+  BarChart3, Paperclip, Search, SendHorizontal, Sparkles, Square, SquareTerminal, Trash2, TriangleAlert, X,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -19,12 +19,15 @@ import { cn } from "@/lib/utils";
 // Token Plan only; this page sends messages and follows the run over Server-Sent Events.
 
 type Repo = { name: string; branch: string; conversations: number; running: boolean; updated: number };
+type Att = { path: string; name: string; size: number; image: boolean };
+type Pending = Partial<Att> & { key: string; name: string; preview?: string; busy: boolean };
+
 type Conv = { id: string; title: string; model: string; updated: number; running: boolean; tokens?: number };
 type Tally = { in: number; out: number; cached: number; reasoning: number; calls: number };
 type Usage = { total: Record<"today" | "week" | "month" | "all", Tally>; days: (Tally & { day: string })[]; bySource: (Tally & { name: string })[];
   byModel: (Tally & { name: string })[]; since: number; limit: number };
 type Ev =
-  | { t: "user"; text: string; model?: string }
+  | { t: "user"; text: string; model?: string; files?: Att[] }
   | { t: "thinking" | "text" | "note" | "error"; text: string }
   | { t: "tool"; id: string; name: string; label: string; status: "run" | "ok" | "err"; output?: string; diff?: { old: string; new: string } }
   | { t: "done" };
@@ -39,6 +42,44 @@ function ago(ms: number) {
   if (s < 3600) return `${Math.floor(s / 60)} mnt lalu`;
   if (s < 86400) return `${Math.floor(s / 3600)} jam lalu`;
   return new Date(ms).toLocaleDateString("id-ID", { day: "numeric", month: "short" });
+}
+
+const fileUrl = (path: string) => `${BASE}/api/mimo/file${qs({ path })}`;
+const kb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** Phone photos are shrunk before upload (long side 1600 px, JPEG) so the model can look at them. */
+async function shrinkImage(file: File): Promise<Blob> {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 1_200_000) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * k);
+    c.height = Math.round(bmp.height * k);
+    c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise<Blob>((ok) => c.toBlob((b) => ok(b || file), "image/jpeg", 0.85));
+  } catch {
+    return file;
+  }
+}
+
+function FileChips({ files }: { files: Att[] }) {
+  return (
+    <div className="flex flex-wrap justify-end gap-2">
+      {files.map((f) =>
+        f.image ? (
+          <a key={f.path} href={fileUrl(f.path)} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border">
+            <img src={fileUrl(f.path)} alt={f.name} className="h-28 max-w-[200px] object-cover" />
+          </a>
+        ) : (
+          <a key={f.path} href={fileUrl(f.path)} className="flex items-center gap-1.5 rounded-lg border bg-card px-2.5 py-1.5 text-xs">
+            <FileText className="size-3.5 text-muted-foreground" /> <span className="max-w-[180px] truncate">{f.name}</span>
+            <span className="text-muted-foreground">{kb(f.size)}</span>
+          </a>
+        ),
+      )}
+    </div>
+  );
 }
 
 // ------------------------------------------------------------------ light markdown: code blocks, inline code, bold, headings, lists
@@ -95,10 +136,10 @@ function Markdown({ text }: { text: string }) {
 
 // ------------------------------------------------------------------ one event
 const TOOL_ICON: Record<string, typeof FileText> = {
-  read_file: FileText, write_file: FilePlus, edit_file: FilePen, list_dir: FolderTree, search: Search, find_files: Search, bash: SquareTerminal,
+  read_file: FileText, view_image: FileText, write_file: FilePlus, edit_file: FilePen, list_dir: FolderTree, search: Search, find_files: Search, bash: SquareTerminal,
 };
 const TOOL_VERB: Record<string, string> = {
-  read_file: "Membaca", write_file: "Menulis", edit_file: "Mengubah", list_dir: "Melihat folder", search: "Mencari", find_files: "Mencari file", bash: "Menjalankan",
+  read_file: "Membaca", view_image: "Melihat gambar", write_file: "Menulis", edit_file: "Mengubah", list_dir: "Melihat folder", search: "Mencari", find_files: "Mencari file", bash: "Menjalankan",
 };
 
 function ToolCard({ ev }: { ev: Extract<Ev, { t: "tool" }> }) {
@@ -149,7 +190,8 @@ function EventView({ ev, live }: { ev: Ev; live: boolean }) {
   switch (ev.t) {
     case "user":
       return (
-        <div className="flex justify-end">
+        <div className="flex flex-col items-end gap-2">
+          {ev.files?.length ? <FileChips files={ev.files} /> : null}
           <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm whitespace-pre-wrap text-primary-foreground">{ev.text}</div>
         </div>
       );
@@ -345,6 +387,28 @@ function Chat({ repo, id, onCreated, onBack, showBack }: { repo: Repo; id: strin
   const { events, running, model, setModel, tokens, follow, setEvents, setRunning } = useConversation(repo.name, id);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [drag, setDrag] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+
+  const attach = async (list: FileList | File[]) => {
+    for (const f of Array.from(list).slice(0, 10)) {
+      const key = `${Date.now()}-${Math.random()}`;
+      const preview = f.type.startsWith("image/") ? URL.createObjectURL(f) : undefined;
+      setPending((p) => [...p, { key, name: f.name || "gambar.png", preview, busy: true }]);
+      try {
+        const body = await shrinkImage(f);
+        const name = body !== f ? (f.name || "gambar").replace(/\.\w+$/, "") + ".jpg" : f.name || "gambar.png";
+        const res = await fetch(`${BASE}/api/mimo/upload${qs({ repo: repo.name, name })}`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok || d.ok === false) throw new Error(d.message || `Gagal unggah (${res.status})`);
+        setPending((p) => p.map((x) => (x.key === key ? { ...x, ...d, busy: false } : x)));
+      } catch (err) {
+        toast.error(`${f.name}: ${(err as Error).message}`);
+        setPending((p) => p.filter((x) => x.key !== key));
+      }
+    }
+  };
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -360,15 +424,17 @@ function Chat({ repo, id, onCreated, onBack, showBack }: { repo: Repo; id: strin
 
   const send = async () => {
     const msg = text.trim();
-    if (!msg || sending || running) return;
+    const files = pending.filter((p) => !p.busy && p.path) as unknown as Att[];
+    if ((!msg && !files.length) || sending || running || pending.some((p) => p.busy)) return;
     setSending(true);
     try {
-      const r = await postJson<{ id: string }>("/api/mimo/send", { repo: repo.name, id, text: msg, model });
+      const r = await postJson<{ id: string }>("/api/mimo/send", { repo: repo.name, id, text: msg, model, attachments: files.map((f) => ({ path: f.path })) });
       setText("");
+      setPending([]);
       stick.current = true;
       if (r.id !== id) onCreated(r.id);
       else {
-        setEvents((list) => [...list.filter((e) => e.t !== "done"), { t: "user", text: msg, model }]);
+        setEvents((list) => [...list.filter((e) => e.t !== "done"), { t: "user", text: msg || "Lihat file terlampir.", model, files: files.length ? files : undefined }]);
         setRunning(true);
         follow();
       }
@@ -444,9 +510,45 @@ function Chat({ repo, id, onCreated, onBack, showBack }: { repo: Repo; id: strin
         )}
       </div>
 
-      <div className="border-t p-3">
+      <div
+        className={cn("border-t p-3", drag && "bg-primary/5")}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            setDrag(true);
+          }
+        }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDrag(false);
+          if (e.dataTransfer.files.length) attach(e.dataTransfer.files);
+        }}
+      >
         <div className="mx-auto flex max-w-3xl flex-col gap-2">
+          {pending.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {pending.map((p) => (
+                <div key={p.key} className="relative flex items-center gap-2 rounded-lg border bg-muted/40 py-1 pr-7 pl-1 text-xs">
+                  {p.preview ? <img src={p.preview} alt="" className="size-10 rounded object-cover" /> : <FileText className="ml-1 size-4 text-muted-foreground" />}
+                  <span className="max-w-[140px] truncate">{p.name}</span>
+                  {p.busy ? <LoaderCircle className="size-3.5 animate-spin text-primary" /> : p.size ? <span className="text-muted-foreground">{kb(p.size)}</span> : null}
+                  <button type="button" className="absolute top-1 right-1 rounded p-0.5 text-muted-foreground hover:text-foreground" onClick={() => setPending((l) => l.filter((x) => x.key !== p.key))}>
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <input ref={picker} type="file" multiple hidden onChange={(e) => { if (e.target.files?.length) attach(e.target.files); e.target.value = ""; }} />
           <textarea
+            onPaste={(e) => {
+              const imgs = Array.from(e.clipboardData.files);
+              if (imgs.length) {
+                e.preventDefault();
+                attach(imgs);
+              }
+            }}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -460,6 +562,9 @@ function Chat({ repo, id, onCreated, onBack, showBack }: { repo: Repo; id: strin
             className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           />
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon-sm" onClick={() => picker.current?.click()} title="Lampirkan file atau gambar">
+              <Paperclip />
+            </Button>
             <div className="flex rounded-lg border p-0.5">
               {(["pro", "flash"] as const).map((m) => (
                 <button
@@ -473,14 +578,14 @@ function Chat({ repo, id, onCreated, onBack, showBack }: { repo: Repo; id: strin
                 </button>
               ))}
             </div>
-            <span className="hidden text-xs text-muted-foreground sm:inline">{wide ? "Enter kirim · Shift+Enter baris baru" : ""}</span>
+            <span className="hidden text-xs text-muted-foreground sm:inline">{wide ? "Enter kirim · Shift+Enter baris baru · tempel/seret file" : ""}</span>
             <div className="ml-auto flex gap-2">
               {running ? (
                 <Button variant="outline-destructive" size="sm" onClick={stop}>
                   <Square /> Hentikan
                 </Button>
               ) : (
-                <Button size="sm" onClick={send} disabled={!text.trim() || sending}>
+                <Button size="sm" onClick={send} disabled={(!text.trim() && !pending.some((p) => p.path)) || sending || pending.some((p) => p.busy)}>
                   {sending ? <LoaderCircle className="animate-spin" /> : <SendHorizontal />} Kirim
                 </Button>
               )}

@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { collectCleanup, killCleanup } from "./cleanup.js";
 import { listRepos, remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
-import { deleteConversation, getConversation, listConversations, MODELS as MIMO_MODELS, sendMessage as mimoSend, stopRun as mimoStop, streamConversation } from "./mimo-chat.js";
+import { deleteConversation, saveUpload as mimoUpload, uploadedFile as mimoFile, getConversation, listConversations, MODELS as MIMO_MODELS, sendMessage as mimoSend, stopRun as mimoStop, streamConversation } from "./mimo-chat.js";
 import { usageSummary as mimoUsage } from "./mimo-usage.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
@@ -1839,6 +1839,24 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, { ok: true, repos: out, models: MIMO_MODELS });
         return;
       }
+      if (sub === "/upload" && req.method === "POST") {
+        // same rule as /api/fs/upload: not a type an HTML form on another site can send
+        if (!String(req.headers["content-type"] || "").startsWith("application/octet-stream")) throw httpError(415, "Harus application/octet-stream");
+        try {
+          sendJson(res, 200, { ok: true, ...(await mimoUpload(req, findRepo(url.searchParams.get("repo")).name, url.searchParams.get("name"))) });
+        } catch (err) {
+          req.resume();
+          throw err;
+        }
+        return;
+      }
+      if (sub === "/file" && req.method === "GET") {
+        const { file, mime } = mimoFile(url.searchParams.get("path"));
+        res.writeHead(200, { "Content-Type": mime, "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff",
+          ...(mime.startsWith("image/") ? {} : { "Content-Disposition": "attachment" }) });
+        createReadStream(file).pipe(res);
+        return;
+      }
       if (sub === "/usage" && req.method === "GET") {
         sendJson(res, 200, { ok: true, ...(await mimoUsage(30)) });
         return;
@@ -1865,7 +1883,7 @@ const server = createServer(async (req, res) => {
         }
         const repo = findRepo(String(body.repo || ""));
         const id = body.id ? String(body.id) : "";
-        if (sub === "/send") sendJson(res, 200, { ok: true, ...(await mimoSend({ repo, id, text: String(body.text || ""), model: String(body.model || "") })) });
+        if (sub === "/send") sendJson(res, 200, { ok: true, ...(await mimoSend({ repo, id, text: String(body.text || ""), model: String(body.model || ""), attachments: body.attachments })) });
         else if (sub === "/stop") sendJson(res, 200, { ok: true, stopped: mimoStop(repo.name, id) });
         else {
           await deleteConversation(repo.name, id);
