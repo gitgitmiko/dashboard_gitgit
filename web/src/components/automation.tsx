@@ -10,6 +10,7 @@ const POST_STATUS: Record<string, [string, Variant]> = {
   posted: ["Terposting", "success"],
   failed: ["Gagal", "destructive"],
   skipped: ["Dilewati", "outline"],
+  missed: ["Tidak jalan", "destructive"],
   prepared: ["Diproses", "warning"],
   waiting: ["Menunggu", "secondary"],
 };

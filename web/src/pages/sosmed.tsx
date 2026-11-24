@@ -47,6 +47,18 @@ type Overview = {
 type Posts = { posts: Post[]; total: number; page: number; totalPages: number };
 
 const KIND: Record<string, string> = { news: "Berita", steam_deals: "Promo Steam", recap_saham: "Rekap saham", recap_crypto: "Rekap crypto" };
+// Menit sejak tengah malam WIB; jadwal di overview selalu untuk hari ini (WIB).
+const wibMinutes = () => {
+  const [h, m] = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Jakarta" }).split(":").map(Number);
+  return h * 60 + m;
+};
+// Slot lewat tanpa catatan sama sekali berarti tidak pernah dipicu (mis. jadwal n8n tidak termuat), bukan dilewati
+// oleh scraper; beri jeda 10 menit karena posting biasanya baru tercatat semenit-dua setelah jam slot.
+const slotStatus = (s: Slot) => {
+  if (!s.past) return "waiting";
+  const [h, m] = s.time.split(":").map(Number);
+  return Number.isNaN(h) || wibMinutes() - (h * 60 + (m || 0)) >= 10 ? "missed" : "prepared";
+};
 const kindLabel = (x: { label?: string; kind: string }) => x.label || KIND[x.kind] || x.kind;
 
 function AccountSchedule({ a }: { a: Account }) {
@@ -85,10 +97,10 @@ function AccountSchedule({ a }: { a: Account }) {
                 {s.platforms.map((p) => (
                   <TableCell key={p.platform} className="max-w-56 min-w-24 align-top">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <PostBadge status={p.status || (s.past ? "skipped" : "waiting")} />
+                      <PostBadge status={p.status || slotStatus(s)} />
                       <ExtLink href={p.permalink} />
                     </div>
-                    <ErrText>{p.error}</ErrText>
+                    <ErrText>{p.error || (!p.status && slotStatus(s) === "missed" ? "Slot tidak dipicu oleh n8n" : null)}</ErrText>
                   </TableCell>
                 ))}
               </TableRow>
