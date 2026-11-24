@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Camera, Music2, SquarePlay, Users } from "lucide-react";
+import { Camera, Drama, Gamepad2, Clapperboard, Mic, Music2, SquarePlay, Users } from "lucide-react";
 import { DateFilter, ErrText, ExtLink, PostBadge, Thumb } from "@/components/automation";
 import { SubTabs, type SubTabDef } from "@/components/subtabs";
 import { ErrorNote, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
@@ -12,6 +12,7 @@ import { api, qs } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
 import { TikTok } from "@/pages/tiktok";
 import { Whatif } from "@/pages/whatif";
+import { Standup } from "@/pages/standup";
 
 type Slot = {
   time: string;
@@ -113,9 +114,10 @@ function AccountSchedule({ a }: { a: Account }) {
   );
 }
 
-/** Posting otomatis satu platform Meta (Instagram/Facebook) dari scraper-social-api. */
-function MetaPosts({ platform, active }: { platform: string; active: boolean }) {
-  const [account, setAccount] = useState("");
+/** Posting otomatis satu platform Meta (Instagram/Facebook) dari scraper-social-api. `account` mengunci satu akun (sub-tab per konten). */
+function MetaPosts({ platform, account: fixedAccount, active }: { platform: string; account?: string; active: boolean }) {
+  const [accountPick, setAccountPick] = useState("");
+  const account = fixedAccount || accountPick;
   const [status, setStatus] = useState("");
   const [date, setDate] = useState("");
   const [page, setPage] = useState(1);
@@ -126,7 +128,7 @@ function MetaPosts({ platform, active }: { platform: string; active: boolean }) 
   };
 
   const poll = active ? 30000 : false;
-  const ov = useQuery({ queryKey: ["sosmed-overview", platform], queryFn: () => api<Overview>(`/api/sosmed/overview${qs({ platform })}`), refetchInterval: poll });
+  const ov = useQuery({ queryKey: ["sosmed-overview", platform, account], queryFn: () => api<Overview>(`/api/sosmed/overview${qs({ platform, account })}`), refetchInterval: poll });
   const posts = useQuery({
     queryKey: ["sosmed-posts", platform, account, status, date, page, pageSize],
     queryFn: () => api<Posts>(`/api/sosmed/posts${qs({ page, pageSize, platform, account, status, date })}`),
@@ -180,14 +182,16 @@ function MetaPosts({ platform, active }: { platform: string; active: boolean }) 
           </CardAction>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
-          <NativeSelect value={account} onChange={(e) => filter(setAccount)(e.target.value)} className="w-40">
-            <option value="">Semua akun</option>
-            {d?.accounts.map((a) => (
-              <option key={a.key} value={a.key}>
-                {a.handle || a.key}
-              </option>
-            ))}
-          </NativeSelect>
+          {!fixedAccount && (
+            <NativeSelect value={accountPick} onChange={(e) => filter(setAccountPick)(e.target.value)} className="w-40">
+              <option value="">Semua akun</option>
+              {d?.accounts.map((a) => (
+                <option key={a.key} value={a.key}>
+                  {a.handle || a.key}
+                </option>
+              ))}
+            </NativeSelect>
+          )}
           <NativeSelect value={status} onChange={(e) => filter(setStatus)(e.target.value)} className="w-36">
             <option value="">Semua status</option>
             <option value="posted">Terposting</option>
@@ -261,12 +265,32 @@ function MetaPosts({ platform, active }: { platform: string; active: boolean }) 
   );
 }
 
+// Tab Instagram dibagi per konten: dua akun fokus punya jadwal dan gaya posting sendiri.
+const INSTAGRAMS: SubTabDef<"game" | "kaiara">[] = [
+  { id: "game", label: "Info Game", icon: Gamepad2, Page: ({ active }) => <MetaPosts platform="instagram" account="game" active={active} /> },
+  { id: "kaiara", label: "Kai & Kak Ara", icon: Drama, Page: ({ active }) => <MetaPosts platform="instagram" account="kaiara" active={active} /> },
+];
+
+function Instagram({ active }: { active: boolean }) {
+  return <SubTabs tabs={INSTAGRAMS} storageKey="dg-sosmed-instagram" active={active} />;
+}
+
+// Isi tab YouTube: tiap channel/pipeline punya pemantauannya sendiri (jadwal, riwayat video, log service).
+const YOUTUBES: SubTabDef<"whatif" | "standup">[] = [
+  { id: "whatif", label: "Apa yang terjadi jika", icon: Clapperboard, Page: Whatif },
+  { id: "standup", label: "Gitgit Stand-up", icon: Mic, Page: Standup },
+];
+
+function Youtube({ active }: { active: boolean }) {
+  return <SubTabs tabs={YOUTUBES} storageKey="dg-sosmed-youtube" active={active} />;
+}
+
 const SUBTABS: SubTabDef<"instagram" | "facebook" | "youtube" | "tiktok">[] = [
-  { id: "instagram", label: "Instagram", icon: Camera, Page: ({ active }) => <MetaPosts platform="instagram" active={active} /> },
+  { id: "instagram", label: "Instagram", icon: Camera, Page: Instagram },
   {
     id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => <MetaPosts platform="facebook" active={active} />,
   },
-  { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Whatif },
+  { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Youtube },
   { id: "tiktok", label: "TikTok", icon: Music2, Page: TikTok },
 ];
 export function Sosmed({ active }: { active: boolean }) {

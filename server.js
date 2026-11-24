@@ -87,6 +87,9 @@ const SOCIAL_API_KEY = process.env.SOCIAL_API_KEY || "";
 // API monitoring "Apa yang terjadi jika" (whatif-automation, service whatif); dibaca read-only.
 const WHATIF_API_URL = (process.env.WHATIF_API_URL || "http://172.18.0.1:8798").replace(/\/+$/, "");
 const WHATIF_API_TOKEN = process.env.WHATIF_API_TOKEN || "";
+// API outbox video "Gitgit Stand-up" (gitgit_standup, service gitgit-standup-api); dibaca read-only.
+const STANDUP_API_URL = (process.env.STANDUP_API_URL || "http://172.18.0.1:8797").replace(/\/+$/, "");
+const STANDUP_API_TOKEN = process.env.STANDUP_API_TOKEN || "";
 const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
 const MAX_TERM = 16;
@@ -272,7 +275,7 @@ const KNOWN_PORTS = {
   8790: "Media n8n — nginx penyaji file media (media.gitgitmiko.my.id)",
   8791: "scraper-social-api — API konten Sosmed (scraper-data-gitgit)",
   8796: "gitgitdev-site — situs gitgitdev.my.id",
-  8797: "KUISABON — API youtube_short_automation",
+  8797: "Gitgit Stand-up — API outbox video untuk n8n (service gitgit-standup-api)",
   8123: "Home Assistant — otomasi rumah (ha.gitgitmiko.my.id)",
   8554: "Frigate — restream RTSP kamera (go2rtc)",
   8555: "Frigate — WebRTC live view kamera",
@@ -1301,8 +1304,10 @@ async function focusPosts(params) {
 async function focusOverview(params) {
   const ov = await fetchSocial("/overview", params);
   const keep = focusOf(params);
-  if (!keep?.length) return ov;
-  ov.accounts = ov.accounts.filter((a) => keep.includes(a.key));
+  const only = params.get("account") || "";
+  if (!keep?.length && !only) return ov;
+  // Sub-tab per konten mengunci satu akun lewat ?account=; selain itu disaring ke daftar akun fokus.
+  ov.accounts = ov.accounts.filter((a) => (!keep?.length || keep.includes(a.key)) && (!only || a.key === only));
   const today = String(ov.now || new Date().toISOString()).slice(0, 10);
   const weekAgo = new Date(Date.parse(today) - 6 * 864e5).toISOString().slice(0, 10);
   const stats = { today: { posted: 0, failed: 0, skipped: 0 }, week: { posted: 0, failed: 0, skipped: 0 } };
@@ -1322,8 +1327,14 @@ async function focusOverview(params) {
   return { ...ov, ...stats, last, next: upcoming.sort((x, y) => x.at.localeCompare(y.at))[0] || null };
 }
 
-async function fetchWhatif(endpoint, params) {
-  if (!WHATIF_API_TOKEN) throw httpError(503, "WHATIF_API_TOKEN belum di-set di .env dashboard");
+// Dua pipeline YouTube yang dipantau tab Sosmed; endpoint monitornya sama (whatif yang lebih dulu ada).
+const YT_MONITORS = {
+  whatif: { url: WHATIF_API_URL, token: WHATIF_API_TOKEN, tokenName: "WHATIF_API_TOKEN", name: "Apa yang terjadi jika", service: "whatif" },
+  standup: { url: STANDUP_API_URL, token: STANDUP_API_TOKEN, tokenName: "STANDUP_API_TOKEN", name: "Gitgit Stand-up", service: "gitgit-standup-api" },
+};
+
+async function fetchMonitor(mon, endpoint, params) {
+  if (!mon.token) throw httpError(503, `${mon.tokenName} belum di-set di .env dashboard`);
   const qs = new URLSearchParams();
   for (const key of ["status", "date", "page", "pageSize", "lines"]) {
     const v = params.get(key);
@@ -1331,16 +1342,35 @@ async function fetchWhatif(endpoint, params) {
   }
   let res;
   try {
-    res = await fetch(`${WHATIF_API_URL}/api/monitor/${endpoint}${qs.size ? `?${qs}` : ""}`, {
-      headers: { "X-Token": WHATIF_API_TOKEN },
+    res = await fetch(`${mon.url}/api/monitor/${endpoint}${qs.size ? `?${qs}` : ""}`, {
+      headers: { "X-Token": mon.token },
       signal: AbortSignal.timeout(10000),
     });
   } catch {
-    throw httpError(502, "API Apa yang terjadi jika tidak bisa dihubungi (service whatif mati?)");
+    throw httpError(502, `API ${mon.name} tidak bisa dihubungi (service ${mon.service} mati?)`);
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw httpError(res.status, data.error || `API whatif error ${res.status}`);
+  if (!res.ok) throw httpError(res.status, data.error || `API ${mon.name} error ${res.status}`);
   return data;
+}
+
+/** Riwayat video Gitgit Stand-up; API outbox hanya mengembalikan semua baris, jadi disaring dan dipaginasi di sini. */
+async function standupHistory(params) {
+  const rows = await fetchMonitor(YT_MONITORS.standup, "history", params);
+  const status = params.get("status");
+  const date = params.get("date");
+  let list = rows;
+  if (status) list = list.filter((r) => (r.status || "menunggu") === status);
+  if (date) list = list.filter((r) => String(r.created || "").slice(0, 10) === date);
+  const size = Math.min(MAX_LIST, Math.max(1, Number(params.get("pageSize")) || PAGE_SIZES[0]));
+  const totalPages = Math.max(1, Math.ceil(list.length / size));
+  const page = Math.min(Math.max(1, Number(params.get("page")) || 1), totalPages);
+  return {
+    runs: list.slice((page - 1) * size, page * size).map((r) => ({ ...r, status: r.status || "menunggu" })),
+    total: list.length,
+    page,
+    totalPages,
+  };
 }
 
 function cctvRecordingFromFile(dateDir, name, st) {
@@ -1665,6 +1695,40 @@ const server = createServer(async (req, res) => {
     }
     const headers = { "Cache-Control": "no-store" };
     for (const h of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition"]) {
+      if (up.headers.get(h)) headers[h] = up.headers.get(h);
+    }
+    res.writeHead(up.status, headers);
+    if (!up.body || req.method === "HEAD") {
+      up.body?.cancel();
+      res.end();
+      return;
+    }
+    Readable.fromWeb(up.body).on("error", () => res.destroy()).pipe(res);
+    return;
+  }
+
+  // Thumbnail video stand-up yang belum terupload (sesudah terupload, thumbnail diambil dari YouTube).
+  // Butuh login karena dipakai tab Sosmed; kunci API outbox tidak pernah dikirim ke browser.
+  const suThumb = /^\/api\/standup\/thumb\/([\w-]+)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && suThumb && (req.method === "GET" || req.method === "HEAD")) {
+    if (!requireAuth(req, res)) return;
+    let up;
+    try {
+      up = await fetch(`${STANDUP_API_URL}/api/videos/${suThumb[1]}/thumbnail.jpg`, {
+        headers: { "X-Token": STANDUP_API_TOKEN },
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch {
+      send(res, 502, "Service gitgit-standup-api tidak bisa dihubungi");
+      return;
+    }
+    if (!up.ok) {
+      up.body?.cancel();
+      send(res, 404, "Thumbnail tidak ditemukan");
+      return;
+    }
+    const headers = { "Cache-Control": "private, max-age=3600" };
+    for (const h of ["content-type", "content-length"]) {
       if (up.headers.get(h)) headers[h] = up.headers.get(h);
     }
     res.writeHead(up.status, headers);
@@ -2047,11 +2111,14 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const wiMatch = /^\/api\/whatif\/(overview|history|logs)$/.exec(path.slice(base.length));
-  if (path.startsWith(base) && wiMatch && req.method === "GET") {
+  const monMatch = /^\/api\/(whatif|standup)\/(overview|history|logs)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && monMatch && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
-      sendJson(res, 200, { ok: true, ...(await fetchWhatif(wiMatch[1], url.searchParams)) });
+      const data = monMatch[1] === "standup" && monMatch[2] === "history"
+        ? await standupHistory(url.searchParams)
+        : await fetchMonitor(YT_MONITORS[monMatch[1]], monMatch[2], url.searchParams);
+      sendJson(res, 200, { ok: true, ...data });
     } catch (err) {
       sendJson(res, err.status || 502, { ok: false, message: err.message });
     }

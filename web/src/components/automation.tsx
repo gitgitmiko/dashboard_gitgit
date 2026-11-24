@@ -19,6 +19,7 @@ const VIDEO_STATUS: Record<string, [string, Variant]> = {
   uploaded: ["Terupload", "success"],
   rendered: ["Belum diupload", "warning"],
   running: ["Diproses", "warning"],
+  menunggu: ["Menunggu", "secondary"],
   failed: ["Gagal", "destructive"],
   missed: ["Terlewat", "destructive"],
   waiting: ["Menunggu", "secondary"],
