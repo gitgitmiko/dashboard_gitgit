@@ -10,12 +10,14 @@ import re
 import shutil
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 HOME = Path.home()
 REPOS = HOME / "github-repos"
 DEST = Path("/mnt/data/share/Konten Automation Sigit")
 YT = DEST / "1. YouTube - Gimana Jadinya"
+GITGIT = DEST / "4. Gitgit - Stand-up Comedy"
 IG = DEST / "2. Instagram - GitGit InfoGame"
 FB = DEST / "3. Facebook - Kai & Kak Ara"
 ARSIP = DEST / "9. Arsip (Tidak Aktif)"
@@ -92,6 +94,24 @@ def kai_ara():
             put(f, FB / "Halaman (Foto Profil & Banner)" / "Stickman (baru)" / f.name)
 
 
+def gitgit_standup():
+    """Videos from the gitgit_standup pipeline (one per day, the outbox is the source of truth) + the channel art."""
+    root = REPOS / "gitgit_standup"
+    for f in ("banner.jpg", "profile.png", "watermark.png", "gitgit-standup.md"):
+        put(root / "assets" / "channel" / f, GITGIT / "Channel Art" / f)
+    for f in sorted((root / "data" / "outbox").glob("*.json")):
+        it = load(f)
+        video = Path(it["video"]) if it.get("video") else None
+        if not it.get("judul") or not video or not video.exists():
+            continue
+        day = (it.get("created") or "")[:10] or time.strftime("%Y-%m-%d", time.localtime(video.stat().st_mtime))
+        base = safe(f"{day} - {it['judul']}")
+        put(video, GITGIT / "Video" / day[:7] / (base + ".mp4"))
+        thumb = Path(it["thumbnail"]) if it.get("thumbnail") else None
+        if thumb and thumb.exists():
+            put(thumb, GITGIT / "Video" / day[:7] / (base + ".jpg"))
+
+
 def parodi():
     runs = REPOS / "parodi-anime" / "runs"
     for d in sorted(runs.glob("*-ep[0-9][0-9]")):
@@ -103,7 +123,7 @@ def parodi():
 
 
 if __name__ == "__main__":
-    for step in (gimana_jadinya, infogame, kai_ara, parodi):
+    for step in (gimana_jadinya, infogame, kai_ara, gitgit_standup, parodi):
         try:
             step()
         except Exception as e:  # noqa: BLE001 - one channel failing must not stop the others
