@@ -12,7 +12,9 @@ import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { collectCleanup, killCleanup } from "./cleanup.js";
-import { remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
+import { listRepos, remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
+import { deleteConversation, getConversation, listConversations, MODELS as MIMO_MODELS, sendMessage as mimoSend, stopRun as mimoStop, streamConversation } from "./mimo-chat.js";
+import { usageSummary as mimoUsage } from "./mimo-usage.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 import { callback as tiktokCallback, disconnect as tiktokDisconnect, loginUrl as tiktokLoginUrl, publish as tiktokPublish,
@@ -1813,6 +1815,67 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, ...result });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  // MiMo Chat: a coding agent per repo on the MiMo Token Plan. Module: mimo-chat.js
+  if (path.startsWith(`${base}/api/mimo/`)) {
+    if (!requireAuth(req, res)) return;
+    const sub = path.slice(`${base}/api/mimo`.length);
+    try {
+      const repos = await listRepos(REPOS_DIR);
+      const findRepo = (name) => {
+        const r = repos.find((x) => x.name === name);
+        if (!r) throw httpError(404, "Repo tidak ditemukan di github-repos");
+        return r;
+      };
+      if (sub === "/repos" && req.method === "GET") {
+        const out = [];
+        for (const r of repos) {
+          const convs = await listConversations(r.name);
+          out.push({ name: r.name, branch: r.branch, conversations: convs.length, running: convs.some((c) => c.running), updated: convs[0]?.updated || 0 });
+        }
+        sendJson(res, 200, { ok: true, repos: out, models: MIMO_MODELS });
+        return;
+      }
+      if (sub === "/usage" && req.method === "GET") {
+        sendJson(res, 200, { ok: true, ...(await mimoUsage(30)) });
+        return;
+      }
+      if (sub === "/conversations" && req.method === "GET") {
+        sendJson(res, 200, { ok: true, conversations: await listConversations(findRepo(url.searchParams.get("repo")).name) });
+        return;
+      }
+      if (sub === "/conversation" && req.method === "GET") {
+        sendJson(res, 200, { ok: true, ...(await getConversation(findRepo(url.searchParams.get("repo")).name, String(url.searchParams.get("id") || ""))) });
+        return;
+      }
+      if (sub === "/stream" && req.method === "GET") {
+        await streamConversation(req, res, findRepo(url.searchParams.get("repo")).name, String(url.searchParams.get("id") || ""), Math.max(0, Number(url.searchParams.get("from")) || 0));
+        return;
+      }
+      if (req.method === "POST" && ["/send", "/stop", "/delete"].includes(sub)) {
+        if (!String(req.headers["content-type"] || "").startsWith("application/json")) throw httpError(415, "Harus JSON");
+        let body;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          throw httpError(400, "JSON tidak valid");
+        }
+        const repo = findRepo(String(body.repo || ""));
+        const id = body.id ? String(body.id) : "";
+        if (sub === "/send") sendJson(res, 200, { ok: true, ...(await mimoSend({ repo, id, text: String(body.text || ""), model: String(body.model || "") })) });
+        else if (sub === "/stop") sendJson(res, 200, { ok: true, stopped: mimoStop(repo.name, id) });
+        else {
+          await deleteConversation(repo.name, id);
+          sendJson(res, 200, { ok: true });
+        }
+        return;
+      }
+      sendJson(res, 404, { ok: false, message: "Tidak ada" });
+    } catch (err) {
+      if (!res.headersSent) sendJson(res, err.status || 500, { ok: false, message: err.message });
     }
     return;
   }

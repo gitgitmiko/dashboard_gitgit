@@ -14,6 +14,7 @@ import { Security } from "@/pages/security";
 import { Sosmed } from "@/pages/sosmed";
 import { Overview } from "@/pages/overview";
 import { RemoteClaude } from "@/pages/remote-claude";
+import { MimoChat } from "@/pages/mimo-chat";
 import { Apps } from "@/pages/apps";
 
 // xterm cukup besar, jadi kode terminal baru diunduh saat tab Terminal pertama kali dibuka.
@@ -24,6 +25,7 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   files: Files,
   terminal: TerminalPage,
   remote: RemoteClaude,
+  mimo: MimoChat,
   scraper: Scraper,
   database: Database,
   cctv: Cctv,
