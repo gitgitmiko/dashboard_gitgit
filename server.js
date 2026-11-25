@@ -1160,7 +1160,7 @@ async function readGitgitScrapeLog(lines, rawPage, rawPageSize) {
 
 const ROUTER_DB = join(osHomedir(), ".9router", "db", "data.sqlite");
 const SECURITY_HELPER = "/usr/local/sbin/gitgit-security";
-const ROUTER_FREE_COMBO = process.env.ROUTER_FREE_COMBO || "gemini-free";
+const ROUTER_FREE_COMBO = process.env.ROUTER_FREE_COMBO || "model-free";
 // Combo memakai alias provider (oc/...), sedangkan usageHistory & providerConnections memakai id aslinya.
 const ROUTER_PROVIDER_ALIAS = { oc: "opencode", or: "openrouter" };
 const ROUTER_PROVIDER_LABEL = { gemini: "Gemini", openrouter: "OpenRouter", opencode: "OpenCode" };
