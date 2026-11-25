@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync, readFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from "node:fs";
 import { cp, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
@@ -17,6 +17,7 @@ import { deleteConversation, saveUpload as mimoUpload, uploadedFile as mimoFile,
 import { usageSummary as mimoUsage } from "./mimo-usage.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
+import { cronStatus } from "./cron.js";
 import { callback as tiktokCallback, disconnect as tiktokDisconnect, loginUrl as tiktokLoginUrl, publish as tiktokPublish,
   publishStatus as tiktokPublishStatus, schedule as tiktokSchedule, startScheduler as tiktokScheduler, tiktokStatus,
   unschedule as tiktokUnschedule, videoPath as tiktokVideoPath } from "./tiktok.js";
@@ -90,6 +91,8 @@ const WHATIF_API_TOKEN = process.env.WHATIF_API_TOKEN || "";
 // API outbox video "Gitgit Stand-up" (gitgit_standup, service gitgit-standup-api); dibaca read-only.
 const STANDUP_API_URL = (process.env.STANDUP_API_URL || "http://172.18.0.1:8797").replace(/\/+$/, "");
 const STANDUP_API_TOKEN = process.env.STANDUP_API_TOKEN || "";
+// Outbox video Kai & Kak Ara (nostalgia-reels): preview video yang sudah diproduksi tapi belum tayang.
+const DUO_OUTBOX_DIR = resolve(process.env.DUO_OUTBOX_DIR || "/home/gitgitmiko/github-repos/nostalgia-reels/data/outbox");
 const CCTV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const CCTV_FILE_RE = /^\d{2}-\d{2}-\d{2}\.mp4$/;
 const MAX_TERM = 16;
@@ -1618,7 +1621,7 @@ const server = createServer(async (req, res) => {
   const path = pathname.replace(/\/+$/, "") || "/";
   const base = BASE;
 
-  if (isLockedPublicHost(req) && !path.startsWith(`${base}/preview/whatif/`)) {
+  if (isLockedPublicHost(req) && !(path.startsWith(`${base}/preview/whatif/`) || path.startsWith(`${base}/preview/duo/`))) {
     if (req.method === "GET" || req.method === "HEAD") {
       res.writeHead(302, { Location: `https://${DASHBOARD_HOST}/`, "Cache-Control": "no-store" });
       res.end();
@@ -1707,6 +1710,42 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Preview video Kai & Kak Ara dari outbox nostalgia-reels: yang sudah diproduksi tapi belum tayang.
+  // Publik seperti preview What If — link video/cover bisa dibagikan sebelum diunggah ke sosmed.
+  const duoPreview = /^\/preview\/duo\/([\w-]+)\.(mp4|jpg)$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && duoPreview && (req.method === "GET" || req.method === "HEAD")) {
+    let item;
+    try {
+      item = JSON.parse(readFileSync(join(DUO_OUTBOX_DIR, `${duoPreview[1]}.json`), "utf8"));
+    } catch {
+      send(res, 404, "Video tidak ditemukan");
+      return;
+    }
+    const file = duoPreview[2] === "mp4" ? item.video : item.cover;
+    let st;
+    try {
+      st = statSync(file);
+    } catch {
+      send(res, 404, "Berkas tidak ditemukan");
+      return;
+    }
+    if (!st.isFile()) {
+      send(res, 404, "Berkas tidak ditemukan");
+      return;
+    }
+    if (duoPreview[2] === "mp4") {
+      sendVideoStream(req, res, file, st, `${duoPreview[1]}.mp4`, false);
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": st.size, "Cache-Control": "private, max-age=3600" });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    createReadStream(file).pipe(res);
+    return;
+  }
+
   // Thumbnail video stand-up yang belum terupload (sesudah terupload, thumbnail diambil dari YouTube).
   // Butuh login karena dipakai tab Sosmed; kunci API outbox tidak pernah dikirim ke browser.
   const suThumb = /^\/api\/standup\/thumb\/([\w-]+)$/.exec(path.slice(base.length));
@@ -1729,6 +1768,41 @@ const server = createServer(async (req, res) => {
     }
     const headers = { "Cache-Control": "private, max-age=3600" };
     for (const h of ["content-type", "content-length"]) {
+      if (up.headers.get(h)) headers[h] = up.headers.get(h);
+    }
+    res.writeHead(up.status, headers);
+    if (!up.body || req.method === "HEAD") {
+      up.body?.cancel();
+      res.end();
+      return;
+    }
+    Readable.fromWeb(up.body).on("error", () => res.destroy()).pipe(res);
+    return;
+  }
+
+  // Preview video stand-up yang belum terupload (sesudah terupload, tonton di YouTube). Diteruskan dari API outbox
+  // lengkap dengan header Range, supaya pemutar di browser bisa seek; kunci API tidak pernah dikirim ke browser.
+  const suVideo = /^\/api\/standup\/video\/([\w-]+)\.mp4$/.exec(path.slice(base.length));
+  if (path.startsWith(base) && suVideo && (req.method === "GET" || req.method === "HEAD")) {
+    if (!STANDUP_API_URL || !STANDUP_API_TOKEN) {
+      send(res, 503, "API stand-up belum dikonfigurasi");
+      return;
+    }
+    let up;
+    try {
+      up = await fetch(`${STANDUP_API_URL}/api/videos/${suVideo[1]}.mp4`, {
+        headers: { "X-Token": STANDUP_API_TOKEN, ...(req.headers.range ? { Range: req.headers.range } : {}) },
+      });
+    } catch {
+      send(res, 502, "API stand-up tidak bisa dihubungi");
+      return;
+    }
+    if (!up.ok && up.status !== 206) {
+      send(res, up.status, up.status === 404 ? "Video tidak ditemukan." : "Gagal mengambil video.");
+      return;
+    }
+    const headers = { "Cache-Control": "private, max-age=3600" };
+    for (const h of ["content-type", "content-length", "content-range", "accept-ranges"]) {
       if (up.headers.get(h)) headers[h] = up.headers.get(h);
     }
     res.writeHead(up.status, headers);
@@ -1967,6 +2041,17 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     return tiktokApi(req, res, url, path.slice(`${base}/api/tiktok`.length),
       { redirect: undefined, after: (note) => `/?tiktok=${note}#sosmed` });
+  }
+
+  // Monitoring cron + produksi Kai & Kak Ara (modul cron.js); read-only, untuk tab Cron.
+  if (path === `${base}/api/cron` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await cronStatus()) });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
+    }
+    return;
   }
 
   if (path === `${base}/api/apps` && req.method === "GET") {

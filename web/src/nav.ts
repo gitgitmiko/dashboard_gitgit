@@ -1,6 +1,6 @@
-import { Bot, MessagesSquare, Database, FolderOpen, Gamepad2, LayoutDashboard, type LucideIcon, ShieldCheck, Share2, Smartphone, SquareTerminal, Video } from "lucide-react";
+import { Bot, CalendarClock, MessagesSquare, Database, FolderOpen, Gamepad2, LayoutDashboard, type LucideIcon, ShieldCheck, Share2, Smartphone, SquareTerminal, Video } from "lucide-react";
 
-export type TabId = "overview" | "files" | "terminal" | "remote" | "mimo" | "database" | "scraper" | "cctv" | "sosmed" | "apps" | "security";
+export type TabId = "overview" | "files" | "terminal" | "remote" | "mimo" | "database" | "scraper" | "cron" | "cctv" | "sosmed" | "apps" | "security";
 
 export type NavGroup = "server" | "otomasi" | "produk";
 
@@ -20,6 +20,7 @@ export const NAV: { id: TabId; label: string; icon: LucideIcon; group: NavGroup 
   { id: "cctv", label: "CCTV", icon: Video, group: "server" },
   { id: "security", label: "Keamanan", icon: ShieldCheck, group: "server" },
   { id: "scraper", label: "Scraper", icon: Bot, group: "otomasi" },
+  { id: "cron", label: "Cron & Produksi", icon: CalendarClock, group: "otomasi" },
   { id: "sosmed", label: "Sosmed", icon: Share2, group: "otomasi" },
   { id: "apps", label: "Apps and Games", icon: Gamepad2, group: "produk" },
 ];

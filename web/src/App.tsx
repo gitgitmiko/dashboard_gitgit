@@ -10,6 +10,7 @@ import { Cctv } from "@/pages/cctv";
 import { Database } from "@/pages/database";
 import { Files } from "@/pages/files";
 import { Scraper } from "@/pages/scraper";
+import { Cron } from "@/pages/cron";
 import { Security } from "@/pages/security";
 import { Sosmed } from "@/pages/sosmed";
 import { Overview } from "@/pages/overview";
@@ -27,6 +28,7 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   remote: RemoteClaude,
   mimo: MimoChat,
   scraper: Scraper,
+  cron: Cron,
   database: Database,
   cctv: Cctv,
   sosmed: Sosmed,
