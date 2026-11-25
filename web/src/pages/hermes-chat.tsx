@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, BookOpen, Brain, Check, ChevronRight, Cpu, FilePen, FilePlus, FileText, FolderTree, GitBranch, Globe, ListTodo, LoaderCircle,
+  ArrowLeft, BarChart3, BookOpen, Brain, Check, ChevronRight, Cpu, FilePen, FilePlus, FileText, FolderTree, GitBranch, Globe, ListTodo, LoaderCircle,
   MessageSquarePlus, Paperclip, Search, SendHorizontal, ShieldAlert, Square, SquareTerminal, Trash2, TriangleAlert, Users, X,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { ErrorNote } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { api, BASE, postJson, qs } from "@/lib/api";
 import { useAsk } from "@/lib/dialogs";
@@ -247,11 +248,96 @@ function EventView({ ev, live, onAnswer }: { ev: Ev; live: boolean; onAnswer?: (
 }
 
 // ------------------------------------------------------------------ token usage
+type Tally = { in: number; out: number; cached: number; reasoning: number; calls: number };
+type Usage = {
+  total: { today: Tally; week: Tally; month: Tally; all: Tally };
+  days: { day: string; in: number; out: number; cached: number; reasoning: number; calls: number }[];
+  byModel: { name: string; in: number; out: number; cached: number; reasoning: number; calls: number }[];
+};
+
 export function fmtTok(n: number) {
   if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1).replace(".", ",")} M`;
   if (n >= 1e6) return `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(".", ",")} jt`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace(".", ",")} rb`;
   return String(n);
+}
+const sum = (t?: Tally) => (t ? t.in + t.out : 0);
+
+function UsageDialog({ open, onOpenChange, data }: { open: boolean; onOpenChange: (o: boolean) => void; data?: Usage }) {
+  const max = Math.max(1, ...(data?.days || []).map(sum));
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85svh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Pemakaian token Hermes</DialogTitle>
+          <DialogDescription>
+            Dihitung di server ini dari setiap panggilan agen Hermes (semua sesi di state.db).
+          </DialogDescription>
+        </DialogHeader>
+        {!data ? <p className="text-sm text-muted-foreground">Memuat…</p> : (
+          <div className="space-y-5 text-sm">
+            <div className="grid grid-cols-3 gap-2">
+              {([["Hari ini", data.total.today], ["7 hari", data.total.week], ["30 hari", data.total.month]] as const).map(([label, t]) => (
+                <div key={label} className="rounded-lg border p-3">
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                  <p className="text-lg font-semibold tabular-nums">{fmtTok(sum(t))}</p>
+                  <p className="text-[11px] text-muted-foreground">{t.calls} panggilan</p>
+                </div>
+              ))}
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">14 hari terakhir</p>
+              <div className="flex h-28 items-end gap-1">
+                {data.days.map((d) => (
+                  <div key={d.day} className="group relative flex h-full flex-1 flex-col justify-end" title={`${d.day}: ${fmtTok(sum(d))} token (${d.calls} panggilan)`}>
+                    <div className="rounded-t bg-primary/80" style={{ height: `${(sum(d) / max) * 100}%`, minHeight: sum(d) ? 2 : 0 }} />
+                    <span className="mt-1 text-center text-[9px] text-muted-foreground tabular-nums">{Number(d.day.slice(8))}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Per model (30 hari)</p>
+              {data.byModel.length === 0 ? <p className="text-xs text-muted-foreground">Belum ada.</p> : (
+                <div className="space-y-1">
+                  {data.byModel.map((r) => (
+                    <div key={r.name} className="flex justify-between gap-2 text-xs">
+                      <span className="truncate">{r.name}</span>
+                      <span className="shrink-0 tabular-nums">{fmtTok(sum(r))} ({r.calls} panggil)</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+              30 hari: masuk {fmtTok(data.total.month.in)}{data.total.month.cached ? ` (cache ${fmtTok(data.total.month.cached)})` : ""} · keluar {fmtTok(data.total.month.out)}
+              {data.total.month.reasoning ? ` (berpikir ${fmtTok(data.total.month.reasoning)})` : ""}. Total sejak pencatatan dimulai: {fmtTok(sum(data.total.all))}.
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UsageStrip({ active }: { active: boolean }) {
+  const [open, setOpen] = useState(false);
+  const q = useQuery({ queryKey: ["hermes-usage"], queryFn: () => api<Usage>("/api/hermes/usage"), enabled: active, refetchInterval: active ? 20000 : false });
+  const t = q.data?.total;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="flex w-full items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-left text-xs hover:bg-accent">
+        <BarChart3 className="size-4 shrink-0 text-primary" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-muted-foreground">Token Hermes hari ini</span>
+          <span className="font-semibold tabular-nums">{t ? fmtTok(sum(t.today)) : "…"}</span>
+          <span className="text-muted-foreground tabular-nums">{t ? ` · 30 hari ${fmtTok(sum(t.month))}` : ""}</span>
+        </span>
+        <ChevronRight className="size-3.5 text-muted-foreground" />
+      </button>
+      <UsageDialog open={open} onOpenChange={setOpen} data={q.data} />
+    </>
+  );
 }
 // ------------------------------------------------------------------ live conversation
 function useConversation(repo: string, id: string | null) {
@@ -578,6 +664,7 @@ export function HermesChat({ active }: { active: boolean }) {
   const side = (
     <div className="flex h-full min-h-0 flex-col">
       <div className="space-y-2 border-b p-3">
+        <UsageStrip active={active} />
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Cari repo…" className="h-8 pl-8 text-sm" />

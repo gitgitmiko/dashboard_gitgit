@@ -15,6 +15,7 @@ import { collectCleanup, killCleanup } from "./cleanup.js";
 import { listRepos, remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
 import { deleteConversation, saveUpload as mimoUpload, uploadedFile as mimoFile, getConversation, listConversations, MODELS as MIMO_MODELS, resumeInterrupted as mimoResume, sendMessage as mimoSend, stopRun as mimoStop, streamConversation } from "./mimo-chat.js";
 import { usageSummary as mimoUsage } from "./mimo-usage.js";
+import { usageSummary as hermesUsage } from "./hermes-usage.js";
 import * as hermesChat from "./hermes-chat.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
@@ -2048,6 +2049,10 @@ const server = createServer(async (req, res) => {
         if (!r) throw httpError(404, "Repo tidak ditemukan di github-repos");
         return r;
       };
+      if (sub === "/usage" && req.method === "GET") {
+        sendJson(res, 200, { ok: true, ...(await hermesUsage(30)) });
+        return;
+      }
       if (sub === "/repos" && req.method === "GET") {
         const out = [];
         for (const r of repos) {
