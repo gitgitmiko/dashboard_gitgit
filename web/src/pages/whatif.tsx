@@ -1,13 +1,11 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Check, Copy, Download } from "lucide-react";
 import { useState } from "react";
-import { BusyBanner, DateFilter, ErrText, ExtLink, fmtDayLong, fmtMinSec, Thumb, VideoBadge } from "@/components/automation";
+import { BusyBanner, DateFilter, ErrText, ExtLink, fmtDayLong, fmtMinSec, PreviewLink, publicPreviewUrl, Thumb, VideoBadge } from "@/components/automation";
 import { ErrorNote, LogView, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
-import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, BASE, qs } from "@/lib/api";
+import { api, qs } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
 
 type Run = {
@@ -40,39 +38,9 @@ const SLOT: Record<string, string> = { pagi: "Pagi", siang: "Siang", sore: "Sore
 const logTone = (l: string) => (/failed|error|gagal/i.test(l) ? "err" : /rendered|uploaded|started/.test(l) ? "ok" : "");
 const videoLen = (s?: number | null) => (s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "");
 
-// Link preview dibagikan ke orang lain tanpa login. Subdomain dashboard dilindungi Cloudflare Access,
-// jadi link publik selalu memakai domain utama (dashboard.x → x) yang tidak melewati Access.
-function publicPreviewUrl(preview: string) {
-  const host = window.location.hostname.replace(/^dashboard\./, "");
-  const origin = host === window.location.hostname ? window.location.origin : `https://${host}`;
-  return `${origin}${BASE}/preview/whatif/${preview}`;
-}
-
 /** Link download preview; hilang sendiri setelah video terupload (service whatif berhenti mengirim "preview"). */
-function PreviewLink({ r }: { r?: Run | null }) {
-  const [copied, setCopied] = useState(false);
-  if (!r?.preview) return null;
-  const href = publicPreviewUrl(r.preview);
-  return (
-    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-      <a href={href} target="_blank" rel="noopener" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-        <Download className="size-3" /> Preview
-      </a>
-      <Button
-        variant="outline"
-        size="xs"
-        className="h-6 text-[11px]"
-        onClick={() =>
-          navigator.clipboard.writeText(href).then(() => {
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 2000);
-          })
-        }
-      >
-        {copied ? <Check /> : <Copy />} {copied ? "Tersalin" : "Salin link publik"}
-      </Button>
-    </div>
-  );
+function previewHref(r?: Run | null) {
+  return r?.preview ? publicPreviewUrl(`/preview/whatif/${r.preview}`) : null;
 }
 
 export function Whatif({ active }: { active: boolean }) {
@@ -165,7 +133,7 @@ export function Whatif({ active }: { active: boolean }) {
                         <ExtLink href={r?.youtube_url} className="mt-1">
                           Tonton
                         </ExtLink>
-                        <PreviewLink r={r} />
+                        <PreviewLink href={previewHref(r)} />
                       </div>
                       <ErrText>{r?.error}</ErrText>
                     </TableCell>
@@ -174,7 +142,7 @@ export function Whatif({ active }: { active: boolean }) {
                         <>
                           <ExtLink href={r.youtube_url}>Tonton</ExtLink>
                           <p className="truncate text-xs text-muted-foreground">{r.title || r.topic}</p>
-                          <PreviewLink r={r} />
+                          <PreviewLink href={previewHref(r)} />
                         </>
                       ) : (
                         "—"
@@ -257,7 +225,7 @@ export function Whatif({ active }: { active: boolean }) {
                       <ExtLink href={r.youtube_url}>Tonton</ExtLink>
                     </div>
                     <div className="sm:hidden">
-                      <PreviewLink r={r} />
+                      <PreviewLink href={previewHref(r)} />
                     </div>
                     <ErrText>{r.error}</ErrText>
                   </TableCell>
@@ -266,7 +234,7 @@ export function Whatif({ active }: { active: boolean }) {
                     <div className="mt-1">
                       <ExtLink href={r.youtube_url}>Tonton</ExtLink>
                     </div>
-                    <PreviewLink r={r} />
+                    <PreviewLink href={previewHref(r)} />
                   </TableCell>
                 </TableRow>
               ))}

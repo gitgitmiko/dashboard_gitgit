@@ -1,7 +1,9 @@
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Check, Copy, Download } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { BASE } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Variant = "success" | "warning" | "destructive" | "outline" | "secondary";
@@ -48,6 +50,40 @@ export function ExtLink({ href, children = "Lihat", className }: { href?: string
       {children}
       <ArrowUpRight className="size-3" />
     </a>
+  );
+}
+
+// Link preview dibagikan ke orang lain tanpa login. Subdomain dashboard dilindungi Cloudflare Access,
+// jadi link publik selalu memakai domain utama (dashboard.x → x) yang tidak melewati Access.
+export function publicPreviewUrl(path: string) {
+  const host = window.location.hostname.replace(/^dashboard\./, "");
+  const origin = host === window.location.hostname ? window.location.origin : `https://${host}`;
+  return `${origin}${BASE}${path}`;
+}
+
+/** Link preview konten yang sudah diproduksi tapi belum tayang; hilang/berubah sendiri setelah terupload. */
+export function PreviewLink({ href }: { href?: string | null }) {
+  const [copied, setCopied] = useState(false);
+  if (!href) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+      <a href={href} target="_blank" rel="noopener" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+        <Download className="size-3" /> Preview
+      </a>
+      <Button
+        variant="outline"
+        size="xs"
+        className="h-6 text-[11px]"
+        onClick={() =>
+          navigator.clipboard.writeText(href).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 2000);
+          })
+        }
+      >
+        {copied ? <Check /> : <Copy />} {copied ? "Tersalin" : "Salin link publik"}
+      </Button>
+    </div>
   );
 }
 

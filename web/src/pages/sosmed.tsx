@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Camera, Drama, Gamepad2, Clapperboard, Mic, Music2, SquarePlay, Users } from "lucide-react";
-import { DateFilter, ErrText, ExtLink, PostBadge, Thumb } from "@/components/automation";
+import { DateFilter, ErrText, ExtLink, PostBadge, PreviewLink, publicPreviewUrl, Thumb } from "@/components/automation";
 import { SubTabs, type SubTabDef } from "@/components/subtabs";
 import { ErrorNote, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,17 @@ type Slot = {
   kind: string;
   label?: string;
   past: boolean;
-  platforms: { platform: string; status: string | null; permalink: string | null; error: string | null }[];
+  // Video duo yang sudah diproduksi (outbox nostalgia-reels) dan diperkirakan mengisi slot ini.
+  forecast?: { run: string; title?: string | null; created?: string | null; seconds?: number | null } | null;
+  platforms: {
+    platform: string;
+    status: string | null;
+    permalink: string | null;
+    error: string | null;
+    title?: string | null;
+    image_url?: string | null;
+    created_at?: string | null;
+  }[];
 };
 type Account = { key: string; category: string; brand_name: string; handle: string; enabled: boolean; connected: boolean; platforms: string[]; schedule: Slot[] };
 type Post = {
@@ -61,15 +71,21 @@ const slotStatus = (s: Slot) => {
   return Number.isNaN(h) || wibMinutes() - (h * 60 + (m || 0)) >= 10 ? "missed" : "prepared";
 };
 const kindLabel = (x: { label?: string; kind: string }) => x.label || KIND[x.kind] || x.kind;
+// Tanggal produksi video outbox (mis. "2026-11-24") ditampilkan pendek, sejajar jam produksi konten.
+const fmtDay = (d?: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString("id-ID", { day: "numeric", month: "short" }) : "—");
 
 function AccountSchedule({ a }: { a: Account }) {
+  const duo = a.schedule.some((s) => s.kind === "duo_reel");
   return (
     <Card className="gap-3 pb-2">
       <CardHeader>
         <div className="min-w-0">
           <CardTitle className="truncate">{a.handle || a.key}</CardTitle>
-          <CardDescription className="mt-1 truncate">
-            {a.brand_name} · kategori {a.category}
+          <CardDescription className="mt-1.5">
+            {a.brand_name} · kategori {a.category} ·{" "}
+            {duo
+              ? "produksi video 01:17 & 13:17 WIB ke outbox nostalgia-reels, diunggah n8n saat slot"
+              : "konten dibuat scraper saat slot, diunggah n8n"}
           </CardDescription>
         </div>
         <CardAction>
@@ -81,32 +97,50 @@ function AccountSchedule({ a }: { a: Account }) {
           <TableHeader>
             <TableRow>
               <TableHead>Jam</TableHead>
+              <TableHead>Produksi</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead className="hidden sm:table-cell">Konten</TableHead>
-              {a.platforms.map((p) => (
-                <TableHead key={p}>Status</TableHead>
-              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {a.schedule.map((s) => (
-              <TableRow key={s.time + s.kind}>
-                <TableCell className="align-top">
-                  <span className="tabular font-medium">{s.time}</span>
-                  <p className="text-xs text-muted-foreground sm:hidden">{kindLabel(s)}</p>
-                </TableCell>
-                <TableCell className="hidden align-top text-muted-foreground sm:table-cell">{kindLabel(s)}</TableCell>
-                {s.platforms.map((p) => (
-                  <TableCell key={p.platform} className="max-w-56 min-w-24 align-top">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <PostBadge status={p.status || slotStatus(s)} />
-                      <ExtLink href={p.permalink} />
-                    </div>
-                    <ErrText>{p.error || (!p.status && slotStatus(s) === "missed" ? "Slot tidak dipicu oleh n8n" : null)}</ErrText>
+            {a.schedule.map((s) => {
+              // Konten yang sudah diproduksi (baris postingan) menampilkan judulnya; slot yang belum
+              // jalan memakai perkiraan video outbox yang bisa dipratinjau.
+              const post = s.platforms.find((p) => p.status === "posted") || s.platforms.find((p) => p.created_at);
+              const title = post?.title || s.forecast?.title || kindLabel(s);
+              const link = post?.permalink || post?.image_url || null;
+              const preview = s.forecast ? publicPreviewUrl(`/preview/duo/${s.forecast.run}.mp4`) : null;
+              const produce = post?.created_at ? fmtShort(post.created_at).slice(-5) : s.forecast ? fmtDay(s.forecast.created) : s.past ? "—" : "saat slot";
+              const err = s.platforms.find((p) => p.error)?.error || (!s.platforms.some((p) => p.status) && slotStatus(s) === "missed" ? "Slot tidak dipicu oleh n8n" : null);
+              return (
+                <TableRow key={s.time + s.kind}>
+                  <TableCell className="align-top whitespace-nowrap">
+                    <span className="tabular font-medium">{s.time}</span> <span className="text-xs text-muted-foreground">{kindLabel(s)}</span>
                   </TableCell>
-                ))}
-              </TableRow>
-            ))}
-            {!a.schedule.length && <TableEmpty cols={2 + a.platforms.length}>Tidak ada jadwal hari ini</TableEmpty>}
+                  <TableCell className="tabular align-top text-muted-foreground">{produce}</TableCell>
+                  <TableCell className="max-w-56 min-w-24 align-top">
+                    {s.platforms.map((p) => (
+                      <div key={p.platform} className="flex flex-wrap items-center gap-1.5">
+                        {s.platforms.length > 1 && <span className="text-xs text-muted-foreground">{p.platform.replace(/_reel$/, " Reel")}</span>}
+                        <PostBadge status={p.status || slotStatus(s)} />
+                        <ExtLink href={p.permalink} />
+                      </div>
+                    ))}
+                    <ErrText>{err}</ErrText>
+                    <div className="mt-1.5 sm:hidden">
+                      <ExtLink href={link}>Tonton</ExtLink>
+                      <PreviewLink href={preview} />
+                    </div>
+                  </TableCell>
+                  <TableCell className="hidden max-w-80 align-top sm:table-cell">
+                    <ExtLink href={link}>{post?.permalink ? "Tonton" : "Lihat"}</ExtLink>
+                    <p className="mt-0.5 text-sm">{title}</p>
+                    <PreviewLink href={preview} />
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {!a.schedule.length && <TableEmpty cols={4}>Tidak ada jadwal hari ini</TableEmpty>}
           </TableBody>
         </Table>
       </CardContent>
