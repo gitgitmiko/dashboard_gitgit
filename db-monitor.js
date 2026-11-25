@@ -33,7 +33,6 @@ const DEFAULT_SQLITE = [
   ["Frigate", join(HOME, "cctv-stack", "frigate", "config", "frigate.db")],
   ["Hermes", join(HOME, ".hermes", "state.db")],
   ["gflow", join(HOME, ".local", "share", "gflow-cli", "gflow.db")],
-  ["Kai & Kak Ara", join(HOME, "github-repos/nostalgia-reels/data/nostalgia.db")],
 ];
 
 function sqliteSources() {

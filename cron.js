@@ -1,16 +1,15 @@
 // Monitoring cron + produksi Kai & Kak Ara untuk tab "Cron": daftar job crontab, eksekusi terakhir dari
-// log masing-masing, jadwal berikutnya, dan status pipeline nostalgia-reels dari data/nostalgia.db.
+// log masing-masing, jadwal berikutnya, dan status pipeline nostalgia-reels dari database MySQL nostalgia_reels.
 // Semua read-only: crontab hanya dibaca, database hanya di-query.
 import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { DatabaseSync } from "node:sqlite";
+import mysql from "mysql2/promise";
 
 const execFileAsync = promisify(execFile);
 const HOME = homedir();
-const DB = join(HOME, "github-repos/nostalgia-reels/data/nostalgia.db");
 
 // Log yang dilacak tiap job, dicocokkan ke perintah cron-nya (dipakai untuk status "eksekusi terakhir").
 const LOG_MATCHERS = [
@@ -92,32 +91,37 @@ async function logStatus(file) {
   }
 }
 
-// ---------- status produksi Kai & Kak Ara (database nostalgia.db) ----------
+// ---------- status produksi Kai & Kak Ara (database MySQL nostalgia_reels) ----------
 
 function kaiaraStatus() {
   const def = { episodes: 0, menunggu: 0, diposting: 0, rerataJuri: null, terakhir: [], audit: null };
-  let db;
-  try {
-    db = new DatabaseSync(DB, { readOnly: true });
-    const one = (q) => db.prepare(q).get();
-    const all = (q) => db.prepare(q).all();
-    def.episodes = one("SELECT COUNT(*) AS n FROM episodes").n;
-    def.menunggu = one("SELECT COUNT(*) AS n FROM episodes WHERE status = 'menunggu'").n;
-    def.diposting = one("SELECT COUNT(*) AS n FROM episodes WHERE status = 'diposting'").n;
-    def.rerataJuri = one("SELECT ROUND(AVG(nilai_juri), 1) AS n FROM episodes WHERE nilai_juri IS NOT NULL").n;
-    def.terakhir = all("SELECT run, date, judul, jenis, nilai_juri, seconds, status FROM episodes ORDER BY date DESC, run DESC LIMIT 6");
-    def.audit = one("SELECT tanggal, auditor, naskah, laporan FROM audits ORDER BY tanggal DESC LIMIT 1") || null;
-  } catch {
+  const cfg = {
+    host: process.env.DB_MON_MYSQL_HOST || "127.0.0.1",
+    port: Number(process.env.DB_MON_MYSQL_PORT || 3306),
+    user: process.env.DB_MON_MYSQL_USER,
+    password: process.env.DB_MON_MYSQL_PASSWORD,
+    database: "nostalgia_reels",
+  };
+  return mysql.createConnection(cfg).then(async (con) => {
+    try {
+      const one = async (q) => (await con.query(q))[0][0];
+      const all = async (q) => (await con.query(q))[0];
+      def.episodes = (await one("SELECT COUNT(*) AS n FROM episodes")).n;
+      def.menunggu = (await one("SELECT COUNT(*) AS n FROM episodes WHERE status = 'menunggu'")).n;
+      def.diposting = (await one("SELECT COUNT(*) AS n FROM episodes WHERE status = 'diposting'")).n;
+      def.rerataJuri = (await one("SELECT ROUND(AVG(nilai_juri), 1) AS n FROM episodes WHERE nilai_juri IS NOT NULL")).n;
+      def.terakhir = await all("SELECT run, date, judul, jenis, nilai_juri, seconds, status FROM episodes ORDER BY date DESC, run DESC LIMIT 6");
+      def.audit = (await one("SELECT tanggal, auditor, naskah, laporan FROM audits ORDER BY tanggal DESC LIMIT 1")) || null;
+    } finally {
+      await con.end().catch(() => {});
+    }
     return def;
-  } finally {
-    try { db?.close(); } catch { /* abaikan */ }
-  }
-  return def;
+  }).catch(() => def);
 }
 
 export async function cronStatus() {
   const { stdout } = await execFileAsync("crontab", ["-l"], { maxBuffer: 1 << 20 });
   const jobs = parseCrontab(stdout);
   for (const j of jobs) Object.assign(j, await logStatus(j.logFile));
-  return { jobs, kaiara: kaiaraStatus() };
+  return { jobs, kaiara: await kaiaraStatus() };
 }
