@@ -24,6 +24,8 @@ const logTone = (l: string) => (/failed|error|gagal/i.test(l) ? "err" : /uploade
 // Thumbnail video yang belum terupload diambil lewat dashboard (API outbox butuh kunci); sesudah terupload, dari YouTube.
 const thumbOf = (r: Run) => (r.youtube_id ? `https://i.ytimg.com/vi/${r.youtube_id}/mqdefault.jpg` : `${BASE}/api/standup/thumb/${r.run}`);
 const ytUrl = (r: Run) => (r.youtube_id ? `https://www.youtube.com/watch?v=${r.youtube_id}` : null);
+// Yang belum terupload bisa ditonton langsung: dashboard meneruskan videonya dari API outbox (butuh login).
+const previewUrl = (r: Run) => `${BASE}/api/standup/video/${r.run}.mp4`;
 
 export function Standup({ active }: { active: boolean }) {
   const [status, setStatus] = useState("");
@@ -116,16 +118,12 @@ export function Standup({ active }: { active: boolean }) {
                     {r.picked && <p className="text-xs text-muted-foreground">diposting {fmtShort(r.picked)}</p>}
                   </TableCell>
                   <TableCell className="align-top">
-                    <Thumb src={thumbOf(r)} href={ytUrl(r)} className="h-[45px] w-20 sm:h-[63px] sm:w-28" />
+                    <Thumb src={thumbOf(r)} href={ytUrl(r) ?? previewUrl(r)} className="h-[45px] w-20 sm:h-[63px] sm:w-28" />
                   </TableCell>
                   <TableCell className="min-w-44 align-top">
-                    {ytUrl(r) ? (
-                      <a href={ytUrl(r)!} target="_blank" rel="noopener" className="font-medium hover:underline">
-                        {r.judul}
-                      </a>
-                    ) : (
-                      <span className="font-medium">{r.judul}</span>
-                    )}
+                    <a href={ytUrl(r) ?? previewUrl(r)} target="_blank" rel="noopener" className="font-medium hover:underline">
+                      {r.judul}
+                    </a>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       <span className="tabular sm:hidden">{fmtShort(r.created)}</span>
                       <span className="sm:hidden"> · </span>
@@ -133,14 +131,14 @@ export function Standup({ active }: { active: boolean }) {
                     </p>
                     <div className="mt-1.5 flex items-center gap-2 sm:hidden">
                       <VideoBadge status={r.status} />
-                      <ExtLink href={ytUrl(r)}>Tonton</ExtLink>
+                      <ExtLink href={ytUrl(r) ?? previewUrl(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
                     </div>
                     <ErrText>{r.error}</ErrText>
                   </TableCell>
                   <TableCell className="hidden align-top sm:table-cell">
                     <VideoBadge status={r.status} />
                     <div className="mt-1">
-                      <ExtLink href={ytUrl(r)}>Tonton</ExtLink>
+                      <ExtLink href={ytUrl(r) ?? previewUrl(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
                     </div>
                   </TableCell>
                 </TableRow>
