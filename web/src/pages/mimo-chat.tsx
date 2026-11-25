@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Brain, Check, ChevronRight, FilePen, FilePlus, FileText, FolderTree, GitBranch, LoaderCircle, MessageSquarePlus,
+  ArrowLeft, Brain, Check, ChevronRight, FilePen, Globe, Network, Plug, FilePlus, FileText, FolderTree, GitBranch, LoaderCircle, MessageSquarePlus,
   BarChart3, Paperclip, Search, SendHorizontal, Sparkles, Square, SquareTerminal, Trash2, TriangleAlert, X,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -142,14 +142,20 @@ const TOOL_VERB: Record<string, string> = {
   read_file: "Membaca", view_image: "Melihat gambar", write_file: "Menulis", edit_file: "Mengubah", list_dir: "Melihat folder", search: "Mencari", find_files: "Mencari file", bash: "Menjalankan",
 };
 
+// MCP tools: web_<browser tool> (Playwright) and cbm_<graph tool> (codebase-memory); use_tools opens a group.
+const toolIcon = (name: string) => TOOL_ICON[name] || (name === "use_tools" ? Plug : name.startsWith("web_") ? Globe : name.startsWith("cbm_") ? Network : SquareTerminal);
+const toolVerb = (name: string) =>
+  TOOL_VERB[name] || (name === "use_tools" ? "Mengaktifkan tool" : name.startsWith("web_") ? `Browser · ${name.replace(/^web_browser_/, "").replace(/_/g, " ")}`
+    : name.startsWith("cbm_") ? `Graph kode · ${name.slice(4).replace(/_/g, " ")}` : name);
+
 function ToolCard({ ev }: { ev: Extract<Ev, { t: "tool" }> }) {
   const [open, setOpen] = useState(false);
-  const Icon = TOOL_ICON[ev.name] || SquareTerminal;
+  const Icon = toolIcon(ev.name);
   return (
     <div className={cn("rounded-lg border bg-card text-xs", ev.status === "err" && "border-destructive/40")}>
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 font-medium">{TOOL_VERB[ev.name] || ev.name}</span>
+        <span className="shrink-0 font-medium">{toolVerb(ev.name)}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">{ev.label}</span>
         {ev.status === "run" ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-primary" />
           : ev.status === "ok" ? <Check className="size-3.5 shrink-0 text-success" /> : <X className="size-3.5 shrink-0 text-destructive" />}

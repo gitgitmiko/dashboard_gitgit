@@ -14,9 +14,11 @@ import { pipeline } from "node:stream/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { recordUsage } from "./mimo-usage.js";
+import { callMcpTool, mcpTools, openGroup, USE_TOOLS } from "./mcp.js";
 
 const HOME = homedir();
 const STORE = join(HOME, ".config", "gitgit-studio", "mimo-chat");
+const SKILLS = join(STORE, "skills");
 const BASE_URL = (process.env.MIMO_BASE_URL || "https://token-plan-sgp.xiaomimimo.com/v1").replace(/\/+$/, "");
 export const MODELS = { pro: "mimo-v2.6-pro", flash: "mimo-v2.6-flash" };
 const MAX_STEPS = 80;           // model calls per message before it must stop and report
@@ -154,11 +156,18 @@ async function runTool(name, args, repoPath, signal) {
       return { ok: true, out: `Gambar ${file} ditampilkan di pesan berikutnya.`, image: `data:${mime};base64,${(await readFile(file)).toString("base64")}` };
     }
     case "bash": {
+      const cmd = String(args.command ?? "");
+      // service ini adalah proses agen berjalan: restart/stop di tengah run mematikan diri sendiri,
+      // lalu resume-on-restart menyambungnya lagi dan mengulang perintah yang sama — loop.
+      if (/\bsystemctl\b[^|;&]*\b(restart|stop|kill)\b[^|;&]*\bdashboard-gitgit\b/.test(cmd) || /\bpkill\b[^|;&]*server\.js/.test(cmd)) {
+        return { ok: false, out: "Tidak diizinkan: service dashboard-gitgit adalah proses agen ini sendiri; restart di tengah run memicu loop resume-restart. Minta pengguna menjalankan 'systemctl --user restart dashboard-gitgit' dari terminal setelah percakapan selesai." };
+      }
       const secs = Math.min(Math.max(Number(args.timeout) || 120, 1), 600);
-      return sh(String(args.command ?? ""), repoPath, secs * 1000, signal);
+      return sh(cmd, repoPath, secs * 1000, signal);
     }
     default:
-      return { ok: false, out: `Tool tidak dikenal: ${name}` };
+      if (signal.aborted) return { ok: false, out: "Dihentikan" };
+      return callMcpTool(name, args);
   }
 }
 
@@ -222,6 +231,13 @@ async function systemPrompt(repo) {
       /* not there */
     }
   }
+  let ponytail = "";
+  try {
+    ponytail = await readFile(join(SKILLS, "ponytail", "SKILL.md"), "utf8");
+    ponytail = ponytail.replace(/^---[\s\S]*?---\n/, ""); // tanpa front matter
+  } catch {
+    /* skill belum terpasang */
+  }
   const git = await sh("git status --short | head -30; echo; git log --oneline -5", repo.path, 10_000);
   return `Kamu adalah MiMo, agen pemrograman yang bekerja langsung di server milik pengguna (Linux, user ${process.env.USER || "gitgitmiko"}), di repo "${repo.name}" (${repo.path}, branch ${repo.branch || "?"}).
 Tanggal: ${new Date().toLocaleDateString("id-ID", { dateStyle: "full", timeZone: "Asia/Jakarta" })}.
@@ -234,7 +250,15 @@ Cara kerja:
 - Commit atau push HANYA kalau pengguna memintanya. Jangan pernah menampilkan isi .env, token, atau kata sandi.
 - Hati-hati dengan perintah yang merusak (rm -rf, reset --hard, drop table): tanyakan dulu kecuali pengguna jelas memintanya.
 - Jangan menjalankan server yang tidak pernah berhenti di foreground; pakai nohup/systemd bila perlu.
+- Jangan restart/stop service dashboard-gitgit atau bunuh server.js saat run berjalan: itu proses agen ini sendiri, restart akan memutus run dan memicu loop. Bila restart diperlukan, minta pengguna melakukannya dari terminal setelah percakapan selesai.
 - Di akhir, laporkan apa yang dikerjakan dan hasilnya apa adanya (kalau gagal, katakan gagal).
+- Ada tool tambahan yang harus diaktifkan dulu dengan use_tools: grup "web" (browser nyata Playwright: buka halaman, lalu web_browser_snapshot untuk melihat isinya, web_browser_click/type untuk berinteraksi) dan grup "cbm" (graph codebase: cbm_index_repository sekali per repo, lalu cbm_search_graph/cbm_get_code_snippet untuk mencari kode tanpa membaca file besar). Aktifkan hanya kalau tugasnya butuh; tiap grup menambah biaya token di setiap langkah.
+
+--- Gaya kerja (Ponytail, aktif untuk seluruh sesi) ---
+${clip(ponytail, 6000) || "(skill ponytail tidak ditemukan)"}
+
+--- Skill Superpowers (baca SKILL.md yang relevan SEBELUM kerja besar; path: ${SKILLS}/superpowers/<nama>/SKILL.md) ---
+brainstorming (gali kebutuhan sebelum desain) | writing-plans (rencana kerja) | executing-plans (eksekusi rencana) | test-driven-development (TDD) | systematic-debugging (debug berakar) | verification-before-completion (cek sebelum selesai) | subagent-driven-development (koordinasi subagen) | dispatching-parallel-agents (agen paralel) | requesting-code-review / receiving-code-review (review kode) | finishing-a-development-branch (selesaikan branch) | using-git-worktrees (worktree) | using-superpowers (cara pakai skill ini) | writing-skills (tulis skill baru) | diagnosing-superpowers (perbaiki instalasi skill).
 
 Status git saat percakapan dimulai:
 ${git.out}${notes}`;
@@ -264,12 +288,12 @@ function shrinkContext(messages) {
 }
 
 /** One model call, streamed. Calls onDelta for text/reasoning; returns the assistant message. */
-async function callModel(model, messages, signal, onDelta) {
+async function callModel(model, messages, signal, onDelta, tools = TOOLS) {
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: "POST",
     signal,
     headers: { Authorization: `Bearer ${apiKey()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, tools: TOOLS, stream: true, stream_options: { include_usage: true }, temperature: 0.3 }),
+    body: JSON.stringify({ model, messages, tools, stream: true, stream_options: { include_usage: true }, temperature: 0.3 }),
   });
   if (!res.ok) throw new Error(`MiMo ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const dec = new TextDecoder();
@@ -318,13 +342,18 @@ function toolLabel(name, a) {
     case "bash": return String(a.command ?? "");
     case "search": return `${a.pattern}${a.path ? `  di ${a.path}` : ""}${a.glob ? `  (${a.glob})` : ""}`;
     case "find_files": return String(a.glob ?? "");
-    default: return String(a.path ?? "");
+    case "read_file": case "write_file": case "view_image": return String(a.path ?? "");
+    case "use_tools": return String(a.group ?? "");
+    case "web_browser_navigate": return String(a.url ?? "");
+    default: return JSON.stringify(a ?? {}).slice(0, 120); // MCP tools
   }
 }
 
 async function agentLoop(conv, repo, signal, emit) {
   const model = MODELS[conv.model] || MODELS.pro;
   for (let step = 0; step < MAX_STEPS; step++) {
+    // MCP groups (browser, codebase graph) are only sent once the model opened them with use_tools
+    const tools = [...TOOLS, USE_TOOLS, ...(conv.mcpGroups?.length ? await mcpTools(conv.mcpGroups).catch(() => []) : [])];
     shrinkContext(conv.messages);
     // reasoning stays out of what is sent back: only the answer and the tool calls are history
     const history = conv.messages.map(({ reasoning_content, ...m }) =>
@@ -338,7 +367,7 @@ async function agentLoop(conv, repo, signal, emit) {
       }
       live.text += text;
       emit({ type: "delta", index: conv.events.length - 1, text });
-    });
+    }, tools);
     if (usage) {
       conv.tokens = (conv.tokens || 0) + (usage.total_tokens || (usage.prompt_tokens || 0) + (usage.completion_tokens || 0));
       emit({ type: "tokens", tokens: conv.tokens });
@@ -360,7 +389,13 @@ async function agentLoop(conv, repo, signal, emit) {
       emit({ type: "event", index: at, event: ev });
       let r;
       try {
-        r = args ? await runTool(call.function.name, args, repo.path, signal) : { ok: false, out: "Argumen tool bukan JSON yang valid" };
+        if (!args) r = { ok: false, out: "Argumen tool bukan JSON yang valid" };
+        else if (call.function.name === "use_tools") {
+          const group = String(args.group || "");
+          const names = await openGroup(group);
+          conv.mcpGroups = [...new Set([...(conv.mcpGroups || []), group])];
+          r = { ok: true, out: `Grup "${group}" aktif mulai langkah berikutnya: ${names.join(", ")}` };
+        } else r = await runTool(call.function.name, args, repo.path, signal);
       } catch (err) {
         r = { ok: false, out: `Gagal: ${err.message}` };
       }
@@ -511,6 +546,15 @@ export async function resumeInterrupted(repos) {
           }
         }
       }
+      // anti-loop: run yang di-resume lalu langsung me-restart service-nya sendiri akan
+      // resume-restart selamanya. Kalau baru saja di-resume, jangan lanjutkan otomatis.
+      if (conv.resumedAt && Date.now() - conv.resumedAt < 120_000) {
+        conv.running = false;
+        conv.events.push({ t: "note", text: "Tidak dilanjutkan otomatis: baru saja di-resume sebelum restart berikutnya (loop terdeteksi). Kirim pesan baru untuk melanjutkan." });
+        await save(conv).catch(() => {});
+        continue;
+      }
+      conv.resumedAt = Date.now();
       startRun(conv, repo);
       resumed.push(`${repo.name}/${conv.id}`);
     }
