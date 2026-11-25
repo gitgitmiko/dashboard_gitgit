@@ -65,6 +65,8 @@ if mount "$REC_DIR" 2>>"$LOG"; then
   echo "fixed:$device" > "$STATE"
   systemctl --user restart cctv-recorder.service
   log "cctv-recorder.service disambungkan ulang"
+  # Container Frigate tetap memegang mount lama yang mati (Errno 5) sampai di-restart.
+  if docker restart frigate >/dev/null 2>>"$LOG"; then log "frigate di-restart"; else log "restart frigate GAGAL"; fi
 else
   note_once "mount-gagal" "mount ulang GAGAL, cek disk/koneksi USB"
 fi
