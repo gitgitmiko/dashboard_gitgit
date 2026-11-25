@@ -444,9 +444,16 @@ export async function sendMessage({ repo, id, text, model, attachments = [] }) {
     conv.messages.push({ role: "user", content: parts });
   } else conv.messages.push({ role: "user", content: text });
   conv.events.push({ t: "user", text, model: conv.model, ...(files.length ? { files } : {}) });
+  conv.running = true;
   conv.updated = Date.now();
   await save(conv);
+  startRun(conv, repo);
+  return { id: conv.id };
+}
 
+/** Tool loop secara async; dipakai sendMessage dan resumeInterrupted. */
+function startRun(conv, repo) {
+  const key = `${repo.name}/${conv.id}`;
   const abort = new AbortController();
   const bus = new EventEmitter();
   bus.setMaxListeners(50);
@@ -466,19 +473,49 @@ export async function sendMessage({ repo, id, text, model, attachments = [] }) {
         }
       }
     }
+    conv.running = false;
     conv.events.push({ t: "done" });
     conv.updated = Date.now();
     await save(conv).catch(() => {});
     runs.delete(key);
     emit({ type: "done", events: conv.events.length });
   })();
-  return { id: conv.id };
 }
 
 export function stopRun(repo, id) {
   const r = runs.get(`${repo}/${id}`);
   if (r) r.abort.abort();
   return Boolean(r);
+}
+
+/** Sambung lagi run yang terputus oleh restart service (percakapan ber-flag running).
+ *  History tersimpan tiap langkah, jadi cukup lanjutkan tool loop dari status terakhir. */
+export async function resumeInterrupted(repos) {
+  const resumed = [];
+  for (const repo of repos) {
+    let ids = [];
+    try {
+      ids = (await readdir(join(STORE, safe(repo.name)))).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
+    } catch {
+      continue;
+    }
+    for (const id of ids) {
+      const conv = await load(repo.name, id);
+      if (!conv?.running || runs.has(`${repo.name}/${conv.id}`)) continue;
+      // history harus valid sebelum loop lanjut: setiap tool_call wajib punya hasil
+      const last = conv.messages[conv.messages.length - 1];
+      if (last?.role === "assistant" && last.tool_calls) {
+        for (const c of last.tool_calls) {
+          if (!conv.messages.some((m) => m.role === "tool" && m.tool_call_id === c.id)) {
+            conv.messages.push({ role: "tool", tool_call_id: c.id, content: "[terputus saat restart service]" });
+          }
+        }
+      }
+      startRun(conv, repo);
+      resumed.push(`${repo.name}/${conv.id}`);
+    }
+  }
+  return resumed;
 }
 
 /** Server-Sent Events: everything from `from` on, then live updates until the run ends. */

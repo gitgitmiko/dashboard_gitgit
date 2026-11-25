@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { WebSocketServer } from "ws";
 import { collectCleanup, killCleanup } from "./cleanup.js";
 import { listRepos, remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
-import { deleteConversation, saveUpload as mimoUpload, uploadedFile as mimoFile, getConversation, listConversations, MODELS as MIMO_MODELS, sendMessage as mimoSend, stopRun as mimoStop, streamConversation } from "./mimo-chat.js";
+import { deleteConversation, saveUpload as mimoUpload, uploadedFile as mimoFile, getConversation, listConversations, MODELS as MIMO_MODELS, resumeInterrupted as mimoResume, sendMessage as mimoSend, stopRun as mimoStop, streamConversation } from "./mimo-chat.js";
 import { usageSummary as mimoUsage } from "./mimo-usage.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
@@ -2336,4 +2336,10 @@ server.listen(PORT, HOST, () => {
       .then((names) => names.length && console.log(`Remote Claude tersambung lagi: ${names.join(", ")}`))
       .catch((err) => console.error("Gagal memulihkan sesi Remote Claude:", err.message));
   }
+  // Run MiMo yang terputus oleh restart juga dilanjutkan lagi: history tersimpan tiap langkah,
+  // jadi cukup lanjutkan tool loop dari status terakhir (lihat mimo-chat.js resumeInterrupted).
+  listRepos(REPOS_DIR)
+    .then((repos) => mimoResume(repos))
+    .then((names) => names.length && console.log(`MiMo tersambung lagi: ${names.join(", ")}`))
+    .catch((err) => console.error("Gagal memulihkan run MiMo:", err.message));
 });
