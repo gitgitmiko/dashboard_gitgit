@@ -20,6 +20,7 @@ import { Apps } from "@/pages/apps";
 
 // xterm cukup besar, jadi kode terminal baru diunduh saat tab Terminal pertama kali dibuka.
 const TerminalPage = lazy(() => import("@/pages/terminal").then((m) => ({ default: m.TerminalPage })));
+const HermesChat = lazy(() => import("@/pages/hermes-chat").then((m) => ({ default: m.HermesChat })));
 
 const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   overview: Overview,
@@ -27,6 +28,7 @@ const PAGES: Record<TabId, ComponentType<{ tab: TabId; active: boolean }>> = {
   terminal: TerminalPage,
   remote: RemoteClaude,
   mimo: MimoChat,
+  hermes: HermesChat,
   scraper: Scraper,
   cron: Cron,
   database: Database,

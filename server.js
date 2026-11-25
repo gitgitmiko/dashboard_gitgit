@@ -15,6 +15,7 @@ import { collectCleanup, killCleanup } from "./cleanup.js";
 import { listRepos, remoteStatus, restoreRemoteSessions, startRemote, stopRemote } from "./remote-claude.js";
 import { deleteConversation, saveUpload as mimoUpload, uploadedFile as mimoFile, getConversation, listConversations, MODELS as MIMO_MODELS, resumeInterrupted as mimoResume, sendMessage as mimoSend, stopRun as mimoStop, streamConversation } from "./mimo-chat.js";
 import { usageSummary as mimoUsage } from "./mimo-usage.js";
+import * as hermesChat from "./hermes-chat.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 import { cronStatus } from "./cron.js";
@@ -2025,6 +2026,82 @@ const server = createServer(async (req, res) => {
         else if (sub === "/stop") sendJson(res, 200, { ok: true, stopped: mimoStop(repo.name, id) });
         else {
           await deleteConversation(repo.name, id);
+          sendJson(res, 200, { ok: true });
+        }
+        return;
+      }
+      sendJson(res, 404, { ok: false, message: "Tidak ada" });
+    } catch (err) {
+      if (!res.headersSent) sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  // Hermes Chat: the Hermes agent (same one as on Telegram) per repo, through Hermes' own API server. Module: hermes-chat.js
+  if (path.startsWith(`${base}/api/hermes/`)) {
+    if (!requireAuth(req, res)) return;
+    const sub = path.slice(`${base}/api/hermes`.length);
+    try {
+      const repos = await listRepos(REPOS_DIR);
+      const findRepo = (name) => {
+        const r = repos.find((x) => x.name === name);
+        if (!r) throw httpError(404, "Repo tidak ditemukan di github-repos");
+        return r;
+      };
+      if (sub === "/repos" && req.method === "GET") {
+        const out = [];
+        for (const r of repos) {
+          const convs = await hermesChat.listConversations(r.name);
+          out.push({ name: r.name, branch: r.branch, conversations: convs.length, running: convs.some((c) => c.running), updated: convs[0]?.updated || 0 });
+        }
+        sendJson(res, 200, { ok: true, repos: out });
+        return;
+      }
+      if (sub === "/upload" && req.method === "POST") {
+        // same rule as /api/fs/upload: not a type an HTML form on another site can send
+        if (!String(req.headers["content-type"] || "").startsWith("application/octet-stream")) throw httpError(415, "Harus application/octet-stream");
+        try {
+          sendJson(res, 200, { ok: true, ...(await hermesChat.saveUpload(req, findRepo(url.searchParams.get("repo")).name, url.searchParams.get("name"))) });
+        } catch (err) {
+          req.resume();
+          throw err;
+        }
+        return;
+      }
+      if (sub === "/file" && req.method === "GET") {
+        const { file, mime } = hermesChat.uploadedFile(url.searchParams.get("path"));
+        res.writeHead(200, { "Content-Type": mime, "Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff",
+          ...(mime.startsWith("image/") ? {} : { "Content-Disposition": "attachment" }) });
+        createReadStream(file).pipe(res);
+        return;
+      }
+      if (sub === "/conversations" && req.method === "GET") {
+        sendJson(res, 200, { ok: true, conversations: await hermesChat.listConversations(findRepo(url.searchParams.get("repo")).name) });
+        return;
+      }
+      if (sub === "/conversation" && req.method === "GET") {
+        sendJson(res, 200, { ok: true, ...(await hermesChat.getConversation(findRepo(url.searchParams.get("repo")).name, String(url.searchParams.get("id") || ""))) });
+        return;
+      }
+      if (sub === "/stream" && req.method === "GET") {
+        await hermesChat.streamConversation(req, res, findRepo(url.searchParams.get("repo")).name, String(url.searchParams.get("id") || ""));
+        return;
+      }
+      if (req.method === "POST" && ["/send", "/stop", "/delete", "/approval"].includes(sub)) {
+        if (!String(req.headers["content-type"] || "").startsWith("application/json")) throw httpError(415, "Harus JSON");
+        let body;
+        try {
+          body = JSON.parse(await readBody(req));
+        } catch {
+          throw httpError(400, "JSON tidak valid");
+        }
+        const repo = findRepo(String(body.repo || ""));
+        const id = body.id ? String(body.id) : "";
+        if (sub === "/send") sendJson(res, 200, { ok: true, ...(await hermesChat.sendMessage({ repo, id, text: String(body.text || ""), attachments: body.attachments })) });
+        else if (sub === "/stop") sendJson(res, 200, { ok: true, stopped: await hermesChat.stopRun(id) });
+        else if (sub === "/approval") sendJson(res, 200, { ok: true, answered: await hermesChat.answerApproval(id, String(body.choice || ""), body.requestId ? String(body.requestId) : "") });
+        else {
+          await hermesChat.deleteConversation(repo.name, id);
           sendJson(res, 200, { ok: true });
         }
         return;
