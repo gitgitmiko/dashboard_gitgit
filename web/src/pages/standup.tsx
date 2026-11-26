@@ -53,7 +53,7 @@ export function Standup({ active }: { active: boolean }) {
     <div className="flex flex-col gap-5">
       <ErrorNote>{ov.error?.message || hist.error?.message}</ErrorNote>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard loading={!d} label="Menunggu di outbox" value={d?.pending} detail="Diambil n8n tiap hari 19:00 WIB" />
+        <StatCard loading={!d} label="Menunggu di outbox" value={d?.pending} detail="Diambil n8n jam 10, 12, 15, 18, 20 WIB" />
         <StatCard loading={!d} label="Terupload" value={d?.uploaded} detail="Total video di outbox" />
         <StatCard
           loading={!d}
@@ -73,7 +73,7 @@ export function Standup({ active }: { active: boolean }) {
         <CardHeader>
           <div>
             <CardTitle>Riwayat video</CardTitle>
-            <CardDescription className="mt-1.5">Stand-up comedy animasi Gitgit · materi MiMo 01:23 & 13:23 WIB · suara Gemini · animasi Remotion · diupload n8n 19:00 WIB</CardDescription>
+            <CardDescription className="mt-1.5">Stand-up comedy animasi Gitgit · materi MiMo 5x sehari (mulai 23:00 WIB) · suara Gemini · animasi Remotion · diupload n8n 10:00, 12:00, 15:00, 18:00, 20:00 WIB</CardDescription>
           </div>
           <CardAction>
             <RefreshButton
