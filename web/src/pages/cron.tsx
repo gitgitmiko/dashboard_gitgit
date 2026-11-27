@@ -1,151 +1,226 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { ErrText } from "@/components/automation";
 import { ErrorNote, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { fmtShort } from "@/lib/format";
+import { kindLabel, type Overview as SosmedOverview, slotStatus } from "@/pages/sosmed";
+import { type Status as TikTokStatus, tiktokSlots } from "@/pages/tiktok";
 
-type Job = {
-  name: string;
-  note: string;
-  schedule: string;
-  command: string;
-  next: string | null;
-  logFile: string | null;
-  lastRun: string | null;
-  lastLine: string;
+// Tab Otomasi: satu linimasa hari ini dari semua otomasi (produksi, riset, upload, posting) lintas channel, supaya
+// "apa yang gagal hari ini dan kapan" terjawab sekali lihat. Upload/posting memakai endpoint & cache tab Sosmed.
+
+type St = "ok" | "failed" | "missed" | "running" | "waiting" | "skipped" | "unknown";
+type Row = { at: string; channel: string; kind: string; status: St; detail?: string | null };
+type Periodic = { name: string; channel: string; schedule: string; source: string; last: string | null; status: St; detail: string };
+type Auto = { day: string; minutes: number; timeline: (Row & { what: string })[]; periodic: Periodic[] };
+type YtRun = { status: string; title?: string | null; topic?: string | null; judul?: string; error?: string | null };
+type YtOverview = { schedule: { slot: string; produce?: string | null; upload: string; status: string; run: YtRun | null }[] };
+
+const BADGE: Record<St, [string, "success" | "destructive" | "warning" | "secondary" | "outline"]> = {
+  ok: ["Berhasil", "success"],
+  failed: ["Gagal", "destructive"],
+  missed: ["Tidak jalan", "destructive"],
+  running: ["Berjalan", "warning"],
+  waiting: ["Terjadwal", "secondary"],
+  skipped: ["Dilewati", "outline"],
+  unknown: ["Belum pernah jalan", "outline"],
 };
+const bad = (s: St) => s === "failed" || s === "missed";
+const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+// Status posting Sosmed (PostBadge) ke status linimasa.
+const POST: Record<string, St> = { posted: "ok", failed: "failed", skipped: "skipped", missed: "missed", prepared: "running", waiting: "waiting" };
+const LATE = 45; // menit sesudah jam upload sebelum upload yang belum terjadi dianggap tidak jalan (sama dengan service whatif)
 
-type Episode = { run: string; date: string; judul: string; jenis: number | null; nilai_juri: number | null; seconds: number | null; status: string };
+function ytUploads(channel: string, ov: YtOverview | undefined, now: number): Row[] {
+  return (ov?.schedule ?? []).map((s) => ({
+    at: s.upload,
+    channel,
+    kind: "Upload YouTube",
+    status: s.status === "uploaded" ? "ok" : s.status === "missed" ? "missed" : now >= toMin(s.upload) + LATE ? "missed" : "waiting",
+    detail: s.run?.title || s.run?.judul || s.run?.topic,
+  }));
+}
 
-type CronData = {
-  jobs: Job[];
-  kaiara: {
-    episodes: number;
-    menunggu: number;
-    diposting: number;
-    rerataJuri: number | null;
-    terakhir: Episode[];
-    audit: { tanggal: string; auditor: string; naskah: number; laporan: string } | null;
+function whatifProductions(ov: YtOverview | undefined, now: number): Row[] {
+  return (ov?.schedule ?? [])
+    .filter((s) => s.produce)
+    .map((s) => {
+      const r = s.run;
+      const status: St = !r ? (now >= toMin(s.produce!) + 5 ? "missed" : "waiting") : r.status === "running" ? "running" : r.status === "failed" ? "failed" : "ok";
+      return { at: s.produce!, channel: "Apa yang terjadi jika", kind: "Produksi video", status, detail: r?.status === "failed" ? r.error : r?.title || r?.topic };
+    });
+}
+
+function metaPosts(platform: string, ov: SosmedOverview | undefined): Row[] {
+  return (ov?.accounts ?? []).flatMap((a) =>
+    a.schedule.map((s) => {
+      const p = s.platforms[0];
+      return {
+        at: s.time,
+        channel: a.brand_name || a.key,
+        kind: `Posting ${platform}`,
+        status: POST[p?.status || slotStatus(s)] ?? "waiting",
+        detail: p?.error || p?.title || s.forecast?.title || kindLabel(s),
+      };
+    }),
+  );
+}
+
+export function Cron({ active }: { active: boolean }) {
+  const [show, setShow] = useState<"all" | "bad" | "waiting">("all");
+  const poll = active ? 30000 : false;
+  // Kunci query sama dengan tab Sosmed, jadi datanya berbagi cache.
+  const qs = {
+    auto: useQuery({ queryKey: ["automation"], queryFn: () => api<Auto>("/api/cron"), refetchInterval: poll }),
+    whatif: useQuery({ queryKey: ["wi-overview"], queryFn: () => api<YtOverview>("/api/whatif/overview"), refetchInterval: poll }),
+    standup: useQuery({ queryKey: ["su-overview"], queryFn: () => api<YtOverview>("/api/standup/overview"), refetchInterval: poll }),
+    ig: useQuery({ queryKey: ["sosmed-overview", "instagram", ""], queryFn: () => api<SosmedOverview>("/api/sosmed/overview?platform=instagram"), refetchInterval: poll }),
+    fb: useQuery({ queryKey: ["sosmed-overview", "facebook", ""], queryFn: () => api<SosmedOverview>("/api/sosmed/overview?platform=facebook"), refetchInterval: poll }),
+    tiktok: useQuery({ queryKey: ["tiktok"], queryFn: () => api<TikTokStatus>("/api/tiktok"), refetchInterval: poll }),
   };
-};
-
-const STATUS: Record<string, [string, "success" | "warning" | "destructive" | "outline" | "secondary"]> = {
-  menunggu: ["Menunggu tayang", "warning"],
-  diposting: ["Sudah tayang", "success"],
-  terproduksi: ["Baru diproduksi", "secondary"],
-  riwayat: ["Riwayat", "outline"],
-};
-
-function fmtWaktu(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
-// Penanda masalah di baris terakhir log job.
-function jobBadge(j: Job) {
-  if (!j.lastRun) return <Badge variant="outline">Belum pernah jalan</Badge>;
-  if (/\b(gagal|error|failed|traceback)\b/i.test(j.lastLine)) return <Badge variant="destructive">Ada error di log</Badge>;
-  return <Badge variant="success">Jalan normal</Badge>;
-}
-
-function EpisodeBadge({ status }: { status: string }) {
-  const [label, variant] = STATUS[status] || [status, "outline"];
-  return <Badge variant={variant}>{label}</Badge>;
-}
-
-export function Cron() {
-  const [busy, setBusy] = useState(false);
-  const { data, error, isLoading, refetch } = useQuery({
-    queryKey: ["cron"],
-    queryFn: () => api<CronData>("/api/cron"),
-    refetchInterval: 60_000,
-  });
-  const k = data?.kaiara;
+  const auto = qs.auto.data;
+  const now = auto?.minutes ?? 0;
+  const rows: Row[] = auto
+    ? [
+        ...auto.timeline.map((r) => ({ ...r, kind: r.what })),
+        ...whatifProductions(qs.whatif.data, now),
+        ...ytUploads("Apa yang terjadi jika", qs.whatif.data, now),
+        ...ytUploads("Gitgit Stand-up", qs.standup.data, now),
+        ...metaPosts("Instagram", qs.ig.data),
+        ...metaPosts("Facebook", qs.fb.data),
+        ...(qs.tiktok.data?.connected ? tiktokSlots(qs.tiktok.data).map((s) => ({ at: s.slot, channel: "TikTok", kind: "Posting TikTok", status: POST[s.status] ?? "waiting", detail: s.item?.title })) : []),
+      ].sort((a, b) => a.at.localeCompare(b.at) || a.channel.localeCompare(b.channel))
+    : [];
+  const shown = rows.filter((r) => show === "all" || (show === "bad" ? bad(r.status) : r.status === "waiting"));
+  const done = rows.filter((r) => r.status !== "waiting" && r.status !== "running");
+  const failed = rows.filter((r) => bad(r.status));
+  const next = rows.find((r) => r.status === "waiting" && toMin(r.at) >= now);
+  const periodic = auto?.periodic ?? [];
+  const errors = Object.entries(qs).filter(([, q]) => q.error).map(([k, q]) => `${k}: ${q.error!.message}`);
+  const nowIdx = shown.findIndex((r) => toMin(r.at) > now);
+  const nowLabel = `${String(Math.floor(now / 60)).padStart(2, "0")}:${String(now % 60).padStart(2, "0")}`;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold tracking-tight">Cron & Produksi</h2>
-        <RefreshButton onClick={() => { setBusy(true); refetch().finally(() => setBusy(false)); }} busy={busy || isLoading} />
-      </div>
-      {error && <ErrorNote>{String(error)}</ErrorNote>}
-
+    <div className="flex flex-col gap-5">
+      <ErrorNote>{errors.length ? `Sebagian sumber tidak terbaca: ${errors.join(" · ")}` : null}</ErrorNote>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Job cron aktif" value={data ? data.jobs.length : "—"} detail="crontab server" loading={isLoading} />
-        <StatCard label="Video menunggu tayang" value={k ? k.menunggu : "—"} detail={k ? `${k.diposting} sudah tayang · ${k.episodes} total` : undefined} loading={isLoading} />
-        <StatCard label="Rerata nilai juri" value={k?.rerataJuri ?? "—"} detail="penilaian Opus/Sonnet" loading={isLoading} />
-        <StatCard label="Audit terakhir" value={k?.audit ? `${k.audit.tanggal}` : "—"} detail={k?.audit ? `Claude ${k.audit.auditor} · ${k.audit.naskah} naskah` : undefined} loading={isLoading} />
+        <StatCard loading={!auto} label="Selesai hari ini" value={auto && `${done.length - failed.length}/${rows.length}`} detail={auto && `${rows.length - done.length} masih terjadwal/berjalan`} />
+        <StatCard
+          loading={!auto}
+          label="Bermasalah hari ini"
+          value={<span className={failed.length ? "text-destructive" : undefined}>{failed.length}</span>}
+          detail={failed.length ? `terakhir ${failed[failed.length - 1].at} · ${failed[failed.length - 1].channel}` : "Semua lancar"}
+        />
+        <StatCard loading={!auto} label="Berikutnya" value={next?.at || "—"} detail={next ? `${next.channel} · ${next.kind}` : "Tidak ada lagi hari ini"} />
+        <StatCard
+          loading={!auto}
+          label="Job berkala"
+          value={auto && `${periodic.filter((p) => p.status === "ok").length}/${periodic.length}`}
+          detail={periodic.some((p) => p.status === "failed") ? <span className="text-destructive">ada yang gagal</span> : "cron & timer systemd"}
+        />
       </div>
 
-      <Card>
+      <Card className="gap-3">
         <CardHeader>
-          <CardTitle>Job terjadwal</CardTitle>
-          <CardAction className="text-xs text-muted-foreground">dari crontab server</CardAction>
+          <div>
+            <CardTitle>Linimasa hari ini</CardTitle>
+            <CardDescription className="mt-1.5">Semua produksi, riset, upload, dan posting otomatis lintas channel, diurutkan per jam (WIB)</CardDescription>
+          </div>
+          <CardAction>
+            <RefreshButton busy={Object.values(qs).some((q) => q.isFetching)} onClick={() => Object.values(qs).forEach((q) => q.refetch())} />
+          </CardAction>
         </CardHeader>
         <CardContent>
+          <NativeSelect value={show} onChange={(e) => setShow(e.target.value as typeof show)} className="w-44">
+            <option value="all">Semua ({rows.length})</option>
+            <option value="bad">Bermasalah ({failed.length})</option>
+            <option value="waiting">Terjadwal ({rows.filter((r) => r.status === "waiting").length})</option>
+          </NativeSelect>
+        </CardContent>
+        <CardContent className="px-2 sm:px-3">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Tugas</TableHead>
-                <TableHead>Jadwal</TableHead>
-                <TableHead>Berikutnya</TableHead>
-                <TableHead>Eksekusi terakhir</TableHead>
+                <TableHead>Jam</TableHead>
+                <TableHead>Kegiatan</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="hidden sm:table-cell">Keterangan</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(data?.jobs || []).map((j) => (
-                <TableRow key={j.command}>
-                  <TableCell>
-                    <div className="font-medium">{j.name}</div>
-                    <div className="max-w-[28rem] truncate text-xs text-muted-foreground">{j.command}</div>
-                  </TableCell>
-                  <TableCell className="tabular whitespace-nowrap">{j.schedule}</TableCell>
-                  <TableCell className="whitespace-nowrap">{fmtWaktu(j.next)}</TableCell>
-                  <TableCell>
-                    <div className="whitespace-nowrap">{fmtWaktu(j.lastRun)}</div>
-                    {j.lastLine && <div className="max-w-[28rem] truncate text-xs text-muted-foreground">{j.lastLine}</div>}
-                  </TableCell>
-                  <TableCell>{jobBadge(j)}</TableCell>
-                </TableRow>
+              {!auto && <TableEmpty cols={4}>Memuat…</TableEmpty>}
+              {auto && !shown.length && <TableEmpty cols={4}>{show === "bad" ? "Tidak ada yang bermasalah hari ini." : "Tidak ada kegiatan."}</TableEmpty>}
+              {shown.map((r, i) => (
+                <Fragment key={`${r.at}-${r.channel}-${r.kind}-${i}`}>
+                  {i === nowIdx && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={4} className="py-1 text-xs font-medium text-primary">
+                        ── Sekarang {nowLabel} ──
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  <TableRow className={bad(r.status) ? "bg-destructive/5" : undefined}>
+                    <TableCell className="tabular align-top font-medium whitespace-nowrap">{r.at}</TableCell>
+                    <TableCell className="align-top">
+                      <span className="font-medium">{r.channel}</span>
+                      <p className="text-xs text-muted-foreground">{r.kind}</p>
+                    </TableCell>
+                    <TableCell className="max-w-56 align-top">
+                      <Badge variant={BADGE[r.status][1]}>{BADGE[r.status][0]}</Badge>
+                      <div className="sm:hidden">{bad(r.status) ? <ErrText>{r.detail}</ErrText> : <p className="mt-1 truncate text-xs text-muted-foreground">{r.detail}</p>}</div>
+                    </TableCell>
+                    <TableCell className="hidden max-w-96 align-top sm:table-cell">
+                      {bad(r.status) ? <ErrText>{r.detail}</ErrText> : <p className="truncate text-xs text-muted-foreground">{r.detail || "—"}</p>}
+                    </TableCell>
+                  </TableRow>
+                </Fragment>
               ))}
-              {data && !data.jobs.length && <TableEmpty cols={5}>Tidak ada job cron.</TableEmpty>}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="gap-3">
         <CardHeader>
-          <CardTitle>Produksi terakhir Kai &amp; Kak Ara</CardTitle>
-          <CardAction className="text-xs text-muted-foreground">database nostalgia-reels</CardAction>
+          <div>
+            <CardTitle>Job berkala</CardTitle>
+            <CardDescription className="mt-1.5">Job yang jalan sering atau mingguan: cron di server dan timer systemd</CardDescription>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-2 sm:px-3">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Tanggal</TableHead>
-                <TableHead>Judul</TableHead>
-                <TableHead>Jenis</TableHead>
-                <TableHead>Nilai juri</TableHead>
-                <TableHead>Durasi</TableHead>
+                <TableHead>Job</TableHead>
+                <TableHead className="hidden sm:table-cell">Jadwal</TableHead>
+                <TableHead>Terakhir</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(k?.terakhir || []).map((e) => (
-                <TableRow key={e.run}>
-                  <TableCell className="tabular whitespace-nowrap">{e.date || "—"}</TableCell>
-                  <TableCell className="font-medium">{e.judul || e.run}</TableCell>
-                  <TableCell className="tabular">{e.jenis ?? "—"}</TableCell>
-                  <TableCell className="tabular">{e.nilai_juri ?? "—"}</TableCell>
-                  <TableCell className="tabular whitespace-nowrap">{e.seconds ? `${Math.round(e.seconds)} dtk` : "—"}</TableCell>
-                  <TableCell><EpisodeBadge status={e.status} /></TableCell>
+              {!auto && <TableEmpty cols={4}>Memuat…</TableEmpty>}
+              {periodic.map((p) => (
+                <TableRow key={p.name}>
+                  <TableCell className="max-w-72 align-top">
+                    <span className="font-medium">{p.name}</span>
+                    <p className="text-xs text-muted-foreground">
+                      {p.channel} · {p.source}
+                      <span className="sm:hidden"> · {p.schedule}</span>
+                    </p>
+                  </TableCell>
+                  <TableCell className="hidden align-top text-sm sm:table-cell">{p.schedule}</TableCell>
+                  <TableCell className="tabular align-top whitespace-nowrap">{p.last ? fmtShort(p.last) : "—"}</TableCell>
+                  <TableCell className="max-w-64 align-top">
+                    <Badge variant={BADGE[p.status][1]}>{BADGE[p.status][0]}</Badge>
+                    {p.status === "failed" && <ErrText>{p.detail}</ErrText>}
+                  </TableCell>
                 </TableRow>
               ))}
-              {data && !k?.terakhir.length && <TableEmpty cols={6}>Belum ada episode.</TableEmpty>}
             </TableBody>
           </Table>
         </CardContent>

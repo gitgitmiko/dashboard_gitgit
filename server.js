@@ -19,7 +19,7 @@ import { usageSummary as hermesUsage } from "./hermes-usage.js";
 import * as hermesChat from "./hermes-chat.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
-import { cronStatus } from "./cron.js";
+import { automationStatus } from "./cron.js";
 import { callback as tiktokCallback, disconnect as tiktokDisconnect, loginUrl as tiktokLoginUrl, publish as tiktokPublish,
   publishStatus as tiktokPublishStatus, schedule as tiktokSchedule, startScheduler as tiktokScheduler, tiktokStatus,
   unschedule as tiktokUnschedule, videoPath as tiktokVideoPath } from "./tiktok.js";
@@ -2224,11 +2224,11 @@ const server = createServer(async (req, res) => {
       { redirect: undefined, after: (note) => `/?tiktok=${note}#sosmed` });
   }
 
-  // Monitoring cron + produksi Kai & Kak Ara (modul cron.js); read-only, untuk tab Cron.
+  // Linimasa otomasi hari ini: produksi crontab, riset whatif, job berkala (modul cron.js); read-only, tab Otomasi.
   if (path === `${base}/api/cron` && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
-      sendJson(res, 200, { ok: true, ...(await cronStatus()) });
+      sendJson(res, 200, { ok: true, ...(await automationStatus()) });
     } catch (err) {
       sendJson(res, 500, { ok: false, message: err.message });
     }

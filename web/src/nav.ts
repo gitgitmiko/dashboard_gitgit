@@ -21,7 +21,7 @@ export const NAV: { id: TabId; label: string; icon: LucideIcon; group: NavGroup 
   { id: "cctv", label: "CCTV", icon: Video, group: "server" },
   { id: "security", label: "Keamanan", icon: ShieldCheck, group: "server" },
   { id: "scraper", label: "Scraper", icon: Bot, group: "otomasi" },
-  { id: "cron", label: "Cron & Produksi", icon: CalendarClock, group: "otomasi" },
+  { id: "cron", label: "Otomasi", icon: CalendarClock, group: "otomasi" },
   { id: "sosmed", label: "Sosmed", icon: Share2, group: "otomasi" },
   { id: "apps", label: "Apps and Games", icon: Gamepad2, group: "produk" },
 ];

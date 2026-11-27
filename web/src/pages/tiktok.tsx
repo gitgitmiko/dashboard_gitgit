@@ -23,7 +23,7 @@ type Creator = {
 };
 type Post = { publish_id: string; status: string; privacy_level: string; at: string; fail_reason?: string | null; post_ids?: string[] };
 type Item = { id: string; title: string; format: string; size: number; caption: string; post: Post | null; scheduled: string | null };
-type Status = {
+export type Status = {
   configured: boolean; connected: boolean; user: { display_name?: string; avatar_url?: string } | null;
   creator?: Creator | null; creatorError?: string | null; queue: Item[];
   slots?: string[]; dailyCap?: number; nextSlot?: string | null;
@@ -35,6 +35,27 @@ const when = (iso: string) => new Date(iso).toLocaleString("id-ID", { weekday: "
 const wib = (iso: string) => new Date(iso).toLocaleString("sv-SE", { timeZone: "Asia/Jakarta" });
 const hhmmMin = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 const logTone = (l: string) => (/gagal|error/i.test(l) ? "err" : /diposting|dijadwalkan|dihubungkan|diunggah/.test(l) ? "ok" : "");
+
+/** Jadwal hari ini: tiap slot menampung video yang dijadwalkan atau terposting di 20 menit pertamanya (dipakai juga tab Otomasi). */
+export function tiktokSlots(d?: Status) {
+  const nowWib = wib(new Date().toISOString());
+  const today = nowWib.slice(0, 10);
+  const queue = d?.queue ?? [];
+  return (d?.slots ?? []).map((t) => {
+    const from = hhmmMin(t);
+    const hit = (iso?: string | null) => {
+      if (!iso) return false;
+      const w = wib(iso);
+      const m = hhmmMin(w.slice(11, 16));
+      return w.slice(0, 10) === today && m >= from && m < from + 20;
+    };
+    const done = queue.find((it) => hit(it.post?.at));
+    const planned = queue.find((it) => hit(it.scheduled));
+    const item = done || planned;
+    const status = done ? (done.post!.status === "FAILED" ? "failed" : "posted") : planned ? "prepared" : hhmmMin(nowWib.slice(11, 16)) >= from + 20 ? "missed" : "waiting";
+    return { slot: t, status, item };
+  });
+}
 
 const PRIVACY: Record<string, string> = {
   PUBLIC_TO_EVERYONE: "Publik (semua orang)", MUTUAL_FOLLOW_FRIENDS: "Teman (saling mengikuti)",
@@ -238,21 +259,7 @@ export function TikTok({ active }: { active: boolean }) {
   const failed7 = posted7.filter((it) => it.post!.status === "FAILED");
   const lastPosted = [...posted].sort((a, b) => String(b.post?.at).localeCompare(String(a.post?.at)))[0];
   const postUrl = (it?: Item | null) => (c?.creator_username && it?.post?.post_ids?.[0] ? `https://www.tiktok.com/@${c.creator_username}/video/${it.post.post_ids[0]}` : null);
-  // Tiap slot menampung video yang dijadwalkan atau sudah terposting di rentang 20 menit pertama slot itu.
-  const slotRows = (d?.slots ?? []).map((t) => {
-    const from = hhmmMin(t);
-    const hit = (iso?: string | null) => {
-      if (!iso) return false;
-      const w = wib(iso);
-      const m = hhmmMin(w.slice(11, 16));
-      return w.slice(0, 10) === today && m >= from && m < from + 20;
-    };
-    const done = queue.find((it) => hit(it.post?.at));
-    const planned = queue.find((it) => hit(it.scheduled));
-    const item = done || planned;
-    const status = done ? (done.post!.status === "FAILED" ? "failed" : "posted") : planned ? "prepared" : hhmmMin(nowWib.slice(11, 16)) >= from + 20 ? "missed" : "waiting";
-    return { slot: t, status, item };
-  });
+  const slotRows = tiktokSlots(d);
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <ErrorNote>{q.error?.message || d?.creatorError}</ErrorNote>

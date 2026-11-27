@@ -48,7 +48,7 @@ type Post = {
   created_at: string;
   updated_at: string;
 };
-type Overview = {
+export type Overview = {
   today: { posted: number; failed: number; skipped: number };
   week: { posted: number; failed: number; skipped: number };
   next: { at: string; account: string; kind: string; label?: string } | null;
@@ -65,12 +65,12 @@ const wibMinutes = () => {
 };
 // Slot lewat tanpa catatan sama sekali berarti tidak pernah dipicu (mis. jadwal n8n tidak termuat), bukan dilewati
 // oleh scraper; beri jeda 10 menit karena posting biasanya baru tercatat semenit-dua setelah jam slot.
-const slotStatus = (s: Slot) => {
+export const slotStatus = (s: Slot) => {
   if (!s.past) return "waiting";
   const [h, m] = s.time.split(":").map(Number);
   return Number.isNaN(h) || wibMinutes() - (h * 60 + (m || 0)) >= 10 ? "missed" : "prepared";
 };
-const kindLabel = (x: { label?: string; kind: string }) => x.label || KIND[x.kind] || x.kind;
+export const kindLabel = (x: { label?: string; kind: string }) => x.label || KIND[x.kind] || x.kind;
 const logTone = (l: string) => (/gagal|error|traceback/i.test(l) ? "err" : /posted|siap|diperbarui/.test(l) ? "ok" : "");
 // Tanggal produksi video outbox (mis. "2026-11-24") ditampilkan pendek, sejajar jam produksi konten.
 const fmtDay = (d?: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString("id-ID", { day: "numeric", month: "short" }) : "—");
