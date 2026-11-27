@@ -2225,6 +2225,41 @@ const server = createServer(async (req, res) => {
       { redirect: undefined, after: (note) => `/?tiktok=${note}#sosmed` });
   }
 
+  // Peran AI: siapa yang meriset/menulis/menjuri/mengecek per channel. Pipeline membaca berkas yang sama lewat
+  // lib/peran_ai.py; daftar pilihan & bawaan di bawah harus sama dengan modul itu.
+  if (path === `${base}/api/peran-ai` && (req.method === "GET" || req.method === "PUT")) {
+    if (!requireAuth(req, res)) return;
+    const file = join(HOME, ".config", "gitgit-studio", "peran-ai.json");
+    const CHANNELS = ["standup", "kaiara", "whatif"];
+    const DEFAULTS = { riset: "claude:sonnet", penulis: "claude:sonnet", juri: "claude:opus", cek: "claude:opus" };
+    const CHOICES = ["claude:sonnet", "claude:opus", "mimo:pro", "mimo:flash", "hermes"];
+    const full = (saved) =>
+      Object.fromEntries(CHANNELS.map((ch) => [ch, Object.fromEntries(Object.entries(DEFAULTS).map(([r, d]) => [r, CHOICES.includes(saved?.[ch]?.[r]) ? saved[ch][r] : d]))]));
+    try {
+      if (req.method === "PUT") {
+        const body = JSON.parse((await readBody(req)) || "{}");
+        for (const ch of Object.keys(body)) {
+          if (!CHANNELS.includes(ch)) throw httpError(400, `Channel tidak dikenal: ${ch}`);
+          for (const [r, v] of Object.entries(body[ch] || {})) {
+            if (!(r in DEFAULTS) || !CHOICES.includes(v)) throw httpError(400, `Pilihan tidak valid: ${ch}.${r} = ${v}`);
+          }
+        }
+        await mkdir(dirname(file), { recursive: true });
+        await writeFile(file, JSON.stringify(full(body), null, 1));
+      }
+      let saved = {};
+      try {
+        saved = JSON.parse(await readFile(file, "utf8"));
+      } catch {
+        /* belum pernah diatur: bawaan */
+      }
+      sendJson(res, 200, { ok: true, settings: full(saved), defaults: DEFAULTS, choices: CHOICES });
+    } catch (err) {
+      sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
   // Ide & penjurian per channel (modul ideas.js), untuk kartu di tab Sosmed.
   const ideasMatch = /^\/api\/ideas\/(whatif|kaiara|standup)$/.exec(path.slice(base.length));
   if (path.startsWith(base) && ideasMatch && req.method === "GET") {

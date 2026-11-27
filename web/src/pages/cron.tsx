@@ -1,5 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
+import { toast } from "sonner";
 import { ErrText } from "@/components/automation";
 import { ErrorNote, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +68,76 @@ function metaPosts(platform: string, ov: SosmedOverview | undefined): Row[] {
         detail: p?.error || p?.title || s.forecast?.title || kindLabel(s),
       };
     }),
+  );
+}
+
+type Roles = { settings: Record<string, Record<string, string>>; defaults: Record<string, string>; choices: string[] };
+const AI: Record<string, string> = {
+  "claude:sonnet": "Claude Sonnet",
+  "claude:opus": "Claude Opus",
+  "mimo:pro": "MiMo Pro",
+  "mimo:flash": "MiMo Flash",
+  hermes: "Hermes",
+};
+const CHANNEL: [string, string][] = [["standup", "Gitgit Stand-up"], ["kaiara", "Kai & Kak Ara"], ["whatif", "Apa yang terjadi jika"]];
+const ROLE: [string, string][] = [["riset", "Riset"], ["penulis", "Penulis draf"], ["juri", "Juri"], ["cek", "Cek fakta"]];
+
+/** Siapa yang meriset, menulis draf, menjuri, dan mengecek fakta tiap channel (lib/peran_ai.py membaca berkas yang sama). */
+function RolesCard({ active }: { active: boolean }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["peran-ai"], queryFn: () => api<Roles>("/api/peran-ai"), enabled: active });
+  const [busy, setBusy] = useState(false);
+  async function change(ch: string, role: string, value: string) {
+    if (!q.data) return;
+    setBusy(true);
+    try {
+      const next = { ...q.data.settings, [ch]: { ...q.data.settings[ch], [role]: value } };
+      const r = await api<Roles>("/api/peran-ai", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+      qc.setQueryData(["peran-ai"], r);
+      toast.success(`${CHANNEL.find(([k]) => k === ch)?.[1]} · ${ROLE.find(([k]) => k === role)?.[1]}: ${AI[value]}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Card className="gap-3">
+      <CardHeader>
+        <div>
+          <CardTitle>Peran AI</CardTitle>
+          <CardDescription className="mt-1.5">
+            Siapa yang mengerjakan tiap tahap riset 19:00. Berlaku mulai riset berikutnya, tanpa restart. Kalau AI pilihan gagal (limit/error), tahap itu
+            otomatis dikerjakan bawaannya lalu Claude Sonnet. MiMo tidak bisa web search: sebagai periset ia hanya mengolah daftar tren yang dikumpulkan
+            skrip. Hermes memakai model yang dipilih di config Hermes.
+          </CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {!q.data && <p className="text-sm text-muted-foreground">{q.error?.message || "Memuat…"}</p>}
+        {q.data &&
+          CHANNEL.map(([ch, label]) => (
+            <div key={ch} className="rounded-lg border p-3">
+              <p className="mb-2 text-sm font-medium">{label}</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {ROLE.filter(([role]) => role !== "cek" || ch === "whatif").map(([role, roleLabel]) => (
+                  <label key={role} className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+                    {roleLabel}
+                    <NativeSelect value={q.data.settings[ch][role]} disabled={busy} onChange={(e) => change(ch, role, e.target.value)} className="w-full">
+                      {q.data.choices.map((c) => (
+                        <option key={c} value={c}>
+                          {AI[c] || c}
+                          {c === q.data.defaults[role] ? " (bawaan)" : ""}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -179,6 +250,8 @@ export function Cron({ active }: { active: boolean }) {
           </Table>
         </CardContent>
       </Card>
+
+      <RolesCard active={active} />
 
       <Card className="gap-3">
         <CardHeader>
