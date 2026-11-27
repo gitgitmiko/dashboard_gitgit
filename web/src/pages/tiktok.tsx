@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { CalendarClock, ExternalLink, Globe, Lock, Music2, RefreshCw, Repeat, Send, Unplug, X } from "lucide-react";
-import { ExtLink, PostBadge, fmtDayLong } from "@/components/automation";
-import { ErrorNote, LogView, RefreshButton, StatCard } from "@/components/common";
+import { DateFilter, ExtLink, PostBadge, fmtDayLong } from "@/components/automation";
+import { ErrorNote, LogView, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -191,6 +191,14 @@ export function TikTok({ active }: { active: boolean }) {
   const logs = useQuery({ queryKey: ["tiktok-logs"], queryFn: () => api<{ lines: string[] }>("/api/tiktok/logs?lines=200"), refetchInterval: active ? 60000 : false });
   const [open, setOpen] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [status, setStatus] = useState("");
+  const [date, setDate] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const filter = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v);
+    setPage(1);
+  };
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tiktok");
     if (t) {
@@ -210,9 +218,15 @@ export function TikTok({ active }: { active: boolean }) {
   const avatar = c?.creator_avatar_url || d?.user?.avatar_url;
   const queue = d?.queue ?? [];
   const review = queue.filter((it) => !it.post && !it.scheduled);
-  const scheduled = queue.filter((it) => it.scheduled);
   const posted = queue.filter((it) => it.post && !it.scheduled);
-  const groups: [string, Item[]][] = [["Perlu ditinjau", review], ["Terjadwal", scheduled], ["Sudah diposting", posted]];
+  // Riwayat seperti tab YouTube: terbaru dulu (id diawali YYYYMMDD), disaring status/tanggal lalu dipaginasi.
+  const statusOf = (it: Item) => (it.scheduled ? "scheduled" : !it.post ? "review" : it.post.status === "FAILED" ? "failed" : "posted");
+  const list = queue
+    .filter((it) => (!status || statusOf(it) === status) && (!date || it.id.startsWith(date.replaceAll("-", ""))))
+    .sort((a, b) => b.id.localeCompare(a.id));
+  const totalPages = Math.max(1, Math.ceil(list.length / pageSize));
+  const curPage = Math.min(page, totalPages);
+  const shown = list.slice((curPage - 1) * pageSize, curPage * pageSize);
 
   // Statistik harian/mingguan dihitung dari waktu posting menurut WIB, bukan UTC.
   const nowWib = wib(new Date().toISOString());
@@ -261,7 +275,7 @@ export function TikTok({ active }: { active: boolean }) {
         <StatCard
           loading={!d}
           label="Video terakhir"
-          value={lastPosted ? <ExtLink href={postUrl(lastPosted)} className="text-xl sm:text-2xl">{fmtShort(lastPosted.post!.at)}</ExtLink> : "—"}
+          value={lastPosted ? (postUrl(lastPosted) ? <ExtLink href={postUrl(lastPosted)} className="text-xl sm:text-2xl">{fmtShort(lastPosted.post!.at)}</ExtLink> : fmtShort(lastPosted.post!.at)) : "—"}
           detail={lastPosted ? lastPosted.title : "Belum ada video terposting"}
         />
       </div>
@@ -300,20 +314,22 @@ export function TikTok({ active }: { active: boolean }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Slot</TableHead>
+                <TableHead>Upload</TableHead>
+                <TableHead>Produksi</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="hidden sm:table-cell">Video</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {!d && <TableEmpty cols={3}>Memuat…</TableEmpty>}
-              {d && !d.connected && <TableEmpty cols={3}>Hubungkan akun TikTok untuk melihat jadwal hari ini.</TableEmpty>}
-              {d?.connected && !slotRows.length && <TableEmpty cols={3}>Tidak ada jadwal hari ini</TableEmpty>}
+              {!d && <TableEmpty cols={4}>Memuat…</TableEmpty>}
+              {d && !d.connected && <TableEmpty cols={4}>Hubungkan akun TikTok untuk melihat jadwal hari ini.</TableEmpty>}
+              {d?.connected && !slotRows.length && <TableEmpty cols={4}>Tidak ada jadwal hari ini</TableEmpty>}
               {d?.connected && slotRows.map(({ slot, status, item }) => (
                 <TableRow key={slot}>
                   <TableCell className="align-top whitespace-nowrap">
-                    <span className="tabular font-medium">{slot}</span> <span className="text-xs text-muted-foreground">WIB</span>
+                    <span className="tabular font-medium">{slot}</span>
                   </TableCell>
+                  <TableCell className="tabular align-top">{item ? idDate(item.id).replace(/ \d{4}$/, "") : "—"}</TableCell>
                   <TableCell className="align-top">
                     <PostBadge status={status} />
                     <div className="mt-1.5 sm:hidden">
@@ -337,27 +353,34 @@ export function TikTok({ active }: { active: boolean }) {
         </CardContent>
       </Card>
 
-      <Card className="gap-3">
+      <Card className="gap-3 pb-3">
         <CardHeader>
           <CardTitle>Riwayat video</CardTitle>
           <CardAction>
             <RefreshButton busy={q.isFetching} onClick={refresh} />
           </CardAction>
         </CardHeader>
-        <CardContent className="flex min-w-0 flex-col gap-4">
-          {groups.filter(([, items]) => items.length).map(([label, items]) => (
-            <section key={label} className="flex min-w-0 flex-col gap-3">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
-                {label} <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{items.length}</span>
-              </h2>
-              {items.map((it) => (
-                <VideoRow key={it.id} it={it} d={d!} open={open === it.id} setOpen={(v) => setOpen(v ? it.id : null)} refresh={refresh} />
-              ))}
-            </section>
+        <CardContent className="flex flex-wrap items-center gap-2">
+          <NativeSelect value={status} onChange={(e) => filter(setStatus)(e.target.value)} className="w-40">
+            <option value="">Semua status</option>
+            <option value="review">Perlu ditinjau</option>
+            <option value="scheduled">Terjadwal</option>
+            <option value="posted">Terposting</option>
+            <option value="failed">Gagal</option>
+          </NativeSelect>
+          <DateFilter value={date} onChange={filter(setDate)} />
+          <div className="ml-auto">
+            <PageSizeSelect value={pageSize} onChange={filter(setPageSize)} />
+          </div>
+        </CardContent>
+        <CardContent className="flex min-w-0 flex-col gap-3">
+          {shown.map((it) => (
+            <VideoRow key={it.id} it={it} d={d!} open={open === it.id} setOpen={(v) => setOpen(v ? it.id : null)} refresh={refresh} />
           ))}
-          {d && !queue.length && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Belum ada video.</p>}
+          {d && !list.length && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">Belum ada video.</p>}
           {!d && !q.error && <div className="h-40 animate-pulse rounded-xl border bg-muted/30" />}
         </CardContent>
+        {d && <Pager page={curPage} totalPages={totalPages} onPage={setPage} info={` · ${list.length} video`} />}
       </Card>
 
       <Card className="gap-3">

@@ -111,14 +111,14 @@ export function Standup({ active }: { active: boolean }) {
               {schedule.map((s) => (
                 <TableRow key={s.slot}>
                   <TableCell className="align-top whitespace-nowrap">
-                    <span className="tabular font-medium">{s.upload}</span> <span className="text-xs text-muted-foreground">WIB</span>
+                    <span className="tabular font-medium">{s.upload}</span>
                   </TableCell>
-                  <TableCell className="tabular align-top">{s.produce ? fmtShort(s.produce).slice(-5) : "—"}</TableCell>
+                  <TableCell className="tabular align-top">{s.produce ? fmtShort(s.produce).slice(-5).replace(".", ":") : "—"}</TableCell>
                   <TableCell className="align-top">
                     <VideoBadge status={s.status} />
                     <div className="sm:hidden">
-                      <ExtLink href={s.run && watchHref(s.run)} className="mt-1">
-                        {s.run && ytUrl(s.run) ? "Tonton" : "Preview"}
+                      <ExtLink href={s.run && ytUrl(s.run)} className="mt-1">
+                        Tonton
                       </ExtLink>
                       <PreviewLink href={s.run && s.run.status !== "uploaded" ? previewUrl(s.run) : null} />
                     </div>
@@ -127,7 +127,7 @@ export function Standup({ active }: { active: boolean }) {
                   <TableCell className="hidden max-w-80 align-top sm:table-cell">
                     {s.run ? (
                       <>
-                        <ExtLink href={watchHref(s.run)}>{ytUrl(s.run) ? "Tonton" : "Preview"}</ExtLink>
+                        <ExtLink href={ytUrl(s.run)}>Tonton</ExtLink>
                         <p className="truncate text-xs text-muted-foreground">{s.run.judul}</p>
                         <PreviewLink href={s.run.status !== "uploaded" ? previewUrl(s.run) : null} />
                       </>
@@ -201,15 +201,19 @@ export function Standup({ active }: { active: boolean }) {
                     </p>
                     <div className="mt-1.5 flex items-center gap-2 sm:hidden">
                       <VideoBadge status={r.status} />
-                      <ExtLink href={watchHref(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
+                      <ExtLink href={ytUrl(r)}>Tonton</ExtLink>
+                    </div>
+                    <div className="sm:hidden">
+                      <PreviewLink href={r.status !== "uploaded" ? previewUrl(r) : null} />
                     </div>
                     <ErrText>{r.error}</ErrText>
                   </TableCell>
                   <TableCell className="hidden align-top sm:table-cell">
                     <VideoBadge status={r.status} />
                     <div className="mt-1">
-                      <ExtLink href={watchHref(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
+                      <ExtLink href={ytUrl(r)}>Tonton</ExtLink>
                     </div>
+                    <PreviewLink href={r.status !== "uploaded" ? previewUrl(r) : null} />
                   </TableCell>
                 </TableRow>
               ))}

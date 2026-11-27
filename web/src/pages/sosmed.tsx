@@ -83,7 +83,7 @@ function ScheduleCard({ title, accounts }: { title: string; accounts: Account[] 
     !a.enabled ? <Badge variant="outline">Nonaktif</Badge> : !a.connected ? <Badge variant="destructive">Belum terhubung</Badge> : <Badge variant="success">Aktif</Badge>;
   const rows = accounts.flatMap((a) => a.schedule.map((s) => ({ a, s })));
   return (
-    <Card className="gap-3 pb-3">
+    <Card className="gap-3">
       <CardHeader>
         <div className="min-w-0">
           <CardTitle>Jadwal hari ini · {title}</CardTitle>
@@ -101,7 +101,7 @@ function ScheduleCard({ title, accounts }: { title: string; accounts: Account[] 
           <TableHeader>
             <TableRow>
               {many && <TableHead className="hidden sm:table-cell">Akun</TableHead>}
-              <TableHead>Jam</TableHead>
+              <TableHead>Upload</TableHead>
               <TableHead>Produksi</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="hidden sm:table-cell">Konten</TableHead>
@@ -116,7 +116,7 @@ function ScheduleCard({ title, accounts }: { title: string; accounts: Account[] 
               const content = post?.title || s.forecast?.title || kindLabel(s);
               const link = post?.permalink || post?.image_url || null;
               const preview = s.forecast ? publicPreviewUrl(`/preview/duo/${s.forecast.run}.mp4`) : null;
-              const produce = post?.created_at ? fmtShort(post.created_at).slice(-5) : s.forecast ? fmtDay(s.forecast.created) : s.past ? "—" : "saat slot";
+              const produce = post?.created_at ? fmtShort(post.created_at).slice(-5).replace(".", ":") : s.forecast ? fmtDay(s.forecast.created) : s.past ? "—" : "saat slot";
               const err = s.platforms.find((p) => p.error)?.error || (!s.platforms.some((p) => p.status) && slotStatus(s) === "missed" ? "Slot tidak dipicu oleh n8n" : null);
               return (
                 <TableRow key={`${a.key}-${s.time}-${s.kind}`}>
@@ -126,11 +126,11 @@ function ScheduleCard({ title, accounts }: { title: string; accounts: Account[] 
                     </TableCell>
                   )}
                   <TableCell className="align-top whitespace-nowrap">
-                    <span className="tabular font-medium">{s.time}</span> <span className="text-xs text-muted-foreground">{kindLabel(s)}</span>
+                    <span className="tabular font-medium">{s.time}</span>
                   </TableCell>
                   <TableCell className="tabular align-top text-muted-foreground">{produce}</TableCell>
                   <TableCell className="max-w-56 min-w-24 align-top">
-                    {many && <p className="text-xs text-muted-foreground sm:hidden">{a.handle || a.key}</p>}
+                    <p className="text-xs text-muted-foreground sm:hidden">{many ? `${a.handle || a.key} · ` : ""}{kindLabel(s)}</p>
                     {s.platforms.map((p) => (
                       <div key={p.platform} className="flex flex-wrap items-center gap-1.5">
                         {s.platforms.length > 1 && <span className="text-xs text-muted-foreground">{p.platform.replace(/_reel$/, " Reel")}</span>}
@@ -146,7 +146,7 @@ function ScheduleCard({ title, accounts }: { title: string; accounts: Account[] 
                   </TableCell>
                   <TableCell className="hidden max-w-80 align-top sm:table-cell">
                     <ExtLink href={link}>{post?.permalink ? "Tonton" : "Lihat"}</ExtLink>
-                    <p className="mt-0.5 text-sm">{content}</p>
+                    <p className="truncate text-xs text-muted-foreground">{content === kindLabel(s) ? content : `${kindLabel(s)} · ${content}`}</p>
                     <PreviewLink href={preview} />
                   </TableCell>
                 </TableRow>
@@ -187,12 +187,13 @@ function MetaPosts({ platform, account: fixedAccount, title, active }: { platfor
     refetchInterval: poll,
   });
   const d = ov.data;
+  const planned = d?.accounts.reduce((n, a) => n + a.schedule.length, 0) ?? 0;
 
   return (
     <div className="flex flex-col gap-5">
       <ErrorNote>{ov.error?.message || posts.error?.message}</ErrorNote>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard loading={!d} label="Terposting hari ini" value={d?.today.posted} detail={d && `${d.today.failed} gagal · ${d.today.skipped} dilewati`} />
+        <StatCard loading={!d} label="Terposting hari ini" value={d && `${d.today.posted}/${planned}`} detail={d && `${d.today.failed} gagal · ${d.today.skipped} dilewati`} />
         <StatCard
           loading={!d}
           label="Gagal (7 hari)"

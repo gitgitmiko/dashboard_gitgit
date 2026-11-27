@@ -123,7 +123,7 @@ export function Whatif({ active }: { active: boolean }) {
                 return (
                   <TableRow key={s.slot}>
                     <TableCell className="align-top whitespace-nowrap">
-                      <span className="tabular font-medium">{s.upload}</span> <span className="text-xs text-muted-foreground">{SLOT[s.slot] || s.slot}</span>
+                      <span className="tabular font-medium">{s.upload}</span>
                     </TableCell>
                     <TableCell className="tabular align-top">{s.produce}</TableCell>
                     <TableCell className="align-top">
