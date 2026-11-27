@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { createWriteStream } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { recordUsage } from "./mimo-usage.js";
@@ -326,8 +327,7 @@ async function callModel(model, messages, signal, onDelta, tools = TOOLS) {
     // plan baru membatasi laju token per menit (429 "quota exhausted"); jendelanya bergulir
     // cepat — tunggu sebentar lalu ulangi, jangan langsung gagalkan run
     await res.text().catch(() => {});
-    await new Promise((r) => setTimeout(r, [30_000, 60_000, 60_000][attempt]));
-    if (signal.aborted) break;
+    await sleep([30_000, 60_000, 60_000][attempt], undefined, { signal }); // Stop ends the wait at once (AbortError)
   }
   if (!res.ok) throw new Error(`MiMo ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const dec = new TextDecoder();
