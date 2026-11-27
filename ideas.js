@@ -72,7 +72,7 @@ async function standup() {
   const items = all
     .sort((a, b) => String(b.created || "").localeCompare(String(a.created || "")))
     .slice(0, LATEST)
-    .map((it) => ({ run: it.run, judul: it.judul, created: it.created, status: it.status || "menunggu", topic: it.topic, tema: it.tema, riset: it.riset || null }));
+    .map((it) => ({ run: it.run, judul: it.judul, created: it.created, status: it.status || "menunggu", topic: it.topic, tema: it.tema, riset: it.riset || null, juri: it.juri || null }));
   return { items };
 }
 

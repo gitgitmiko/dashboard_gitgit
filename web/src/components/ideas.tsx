@@ -21,13 +21,14 @@ type WhatifData = {
   }[];
 };
 type KaiaraData = { items: { run: string; date: string; judul: string; nilai: number | null; punchline: string; juri: { nilai: number[]; terpilih: number; alasan: string; kandidat: { judul: string; punchline: string }[] } | null }[] };
-type StandupData = { items: { run: string; judul: string; created: string; status: string; topic: string; tema: string; riset: { sumber: string; kandidat: string[]; pilih: string; sudut: string } | null }[] };
+type Juri = { nilai: (number | null)[]; terpilih: number; alasan: string; oleh?: string; kandidat: { judul: string; punchline: string }[] };
+type StandupData = { items: { run: string; judul: string; created: string; status: string; topic: string; tema: string; riset: { sumber: string; kandidat: string[]; pilih: string; sudut: string } | null; juri: Juri | null }[] };
 
 const UPLOAD: Record<string, string> = { slot1: "10:00", slot2: "12:00", slot3: "15:00", slot4: "18:00", slot5: "20:00" };
 const DESC = {
   whatif: "Opus meriset Shorts yang sedang meledak lalu menyusun 5 ide sehari; penulis membuat 5 kandidat kalimat pembuka, menilainya, dan wajib memakai yang tertinggi",
   kaiara: "Sonnet menulis sampai 3 calon naskah; Opus sebagai juri menilai 1-10 dan memilih yang terbaik untuk diproduksi",
-  standup: "Claude memilih 1 dari 6 kandidat topik (topik ramai atau tema keresahan) dan menentukan sudutnya; tanpa penilaian angka",
+  standup: "Jam 19:00 Sonnet mencari topik viral (web search) dan menulis 8 naskah; Opus menilai peluang views-nya, yang terbaik diproduksi malam itu",
 };
 
 /** Daftar kandidat; yang terpilih ditandai. */
@@ -132,7 +133,16 @@ function Standup({ d }: { d: StandupData }) {
     <>
       {d.items.map((v, k) => (
         <Item key={v.run} open={k === 0} title={v.judul} meta={`diproduksi ${fmtShort(v.created)} · ${v.riset?.sumber || v.tema}`}>
-          {v.riset ? (
+          {v.juri ? (
+            <>
+              <div>
+                <Label>Draf naskah (judul · punchline) dan nilai juri {v.juri.oleh === "opus" ? "Opus" : v.juri.oleh || ""}</Label>
+                <Candidates items={v.juri.kandidat.map((c, j) => ({ text: `${c.judul} · "${c.punchline}"`, score: v.juri!.nilai[j] ?? null, chosen: j === v.juri!.terpilih }))} />
+              </div>
+              {v.juri.alasan && <p className="text-xs text-muted-foreground">Alasan juri: {v.juri.alasan}</p>}
+              {v.riset?.sudut && <p className="text-xs text-muted-foreground">Topik: {v.riset.sudut}</p>}
+            </>
+          ) : v.riset ? (
             <>
               {v.riset.kandidat.length > 0 && (
                 <div>

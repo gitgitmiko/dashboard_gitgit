@@ -17,6 +17,7 @@ const MAX_TIMELINE = 8; // job yang jalan lebih sering dari ini per hari masuk "
 // Job crontab yang dikenal: log-nya, channel-nya, dan apakah log-nya berformat produksi ("=== tgl jam" / "... lewati").
 const KNOWN = [
   { re: /nostalgia-reels\/daily\.sh/, log: "nostalgia-reels/runs/daily.log", channel: "Kai & Kak Ara", what: "Produksi video", prod: true },
+  { re: /gitgit_standup\/research\.sh/, log: "gitgit_standup/runs/research.log", channel: "Gitgit Stand-up", what: "Riset & juri materi", prod: true },
   { re: /gitgit_standup\/daily\.sh/, log: "gitgit_standup/runs/daily.log", channel: "Gitgit Stand-up", what: "Produksi video", prod: true },
   { re: /konten-arsip\.py/, log: () => join(HOME, "cron/konten-arsip.log"), channel: "Arsip", what: "Salin konten ke files.gitgitmiko.my.id" },
   { re: /run_scrape\.sh/, log: () => join(REPOS, `scraper-data-gitgit/data/logs/scrape-${wibDay()}.log`), channel: "Scraper", what: "Scrape data" },
@@ -105,12 +106,20 @@ export function parseProdLog(text, day) {
       if (single[1] === day) runs.push({ at: single[2], status: /lewati/.test(single[3]) ? "skipped" : "ok", detail: single[3] });
     } else if (cur) {
       if (/\] outbox: /.test(line)) cur.videos += 1;
+      // research.sh: "antrean: <judul> (nilai), ..." = berhasil; "sudah ada" = dilewati; "riset gagal" = gagal
+      if (/\] antrean: /.test(line)) [cur.status, cur.done] = ["ok", line.replace(/^.*\] antrean: \S+ — /, "Antrean: ").slice(0, 200)];
+      if (/\] antrean hari ini sudah ada/.test(line)) [cur.status, cur.done] = ["skipped", "Antrean hari ini sudah ada"];
+      if (/\] riset gagal: /.test(line)) [cur.status, cur.error] = ["failed", line.replace(/^.*\] /, "")];
       if (/^\w*(Error|Exception)\b.*: /.test(line)) cur.error = line.trim();
       if (/^Traceback/.test(line)) cur.status = "failed";
     }
   }
   for (const r of runs) {
     if (r.detail !== undefined) continue;
+    if (r.done) {
+      r.detail = r.done;
+      continue;
+    }
     if (r.status === "running" && r.videos) r.status = "ok";
     if (r.status === "failed" && r.videos) r.detail = `${r.videos} video ke outbox, lalu gagal: ${r.error}`;
     else r.detail = r.status === "failed" ? r.error || "Gagal (lihat log)" : r.videos ? `${r.videos} video ke outbox` : "Sedang berjalan";
