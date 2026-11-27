@@ -287,7 +287,7 @@ function shrinkContext(messages) {
   // BACKWARD and skips the head (Hermes-style head/tail protection): prompt caching only
   // pays while the EARLIEST messages stay byte-identical, so the first rewritten message
   // must sit as late as possible — rewriting message #1 first would flush the entire cache.
-  const head = Math.min(4, messages.length - 7);
+  const head = Math.max(1, Math.min(4, messages.length - 7)); // index 0 is the system prompt; short chats: nothing to walk
   for (let i = messages.length - 7; i >= head && total > CONTEXT_CHARS * 0.6; i--) {
     const m = messages[i];
     if (m.role === "tool" && m.content.length > 600) {
