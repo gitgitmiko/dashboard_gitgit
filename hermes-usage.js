@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 export const HERMES_DB = join(homedir(), ".hermes", "state.db");
 
-// day key in Jakarta time
+// day key in Jakarta time; state.db keeps totals per session, so a session counts on the day it was last active
 const dayOf = (t) => new Date(t + 7 * 3600_000).toISOString().slice(0, 10);
 
 export async function usageSummary(days = 30) {

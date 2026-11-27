@@ -271,7 +271,8 @@ function UsageDialog({ open, onOpenChange, data }: { open: boolean; onOpenChange
         <DialogHeader>
           <DialogTitle>Pemakaian token Hermes</DialogTitle>
           <DialogDescription>
-            Dihitung di server ini dari setiap panggilan agen Hermes (semua sesi di state.db).
+            Dihitung di server ini dari setiap panggilan agen Hermes (semua sesi di state.db). Hermes mencatat token per
+            sesi, jadi sesi yang berjalan lintas hari dihitung seluruhnya di hari terakhir sesi itu aktif.
           </DialogDescription>
         </DialogHeader>
         {!data ? <p className="text-sm text-muted-foreground">Memuat…</p> : (
