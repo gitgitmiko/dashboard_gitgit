@@ -27,7 +27,7 @@ type StandupData = { items: { run: string; judul: string; created: string; statu
 const UPLOAD: Record<string, string> = { slot1: "10:00", slot2: "12:00", slot3: "15:00", slot4: "18:00", slot5: "20:00" };
 const DESC = {
   whatif: "Opus meriset Shorts yang sedang meledak lalu menyusun 5 ide sehari; penulis membuat 5 kandidat kalimat pembuka, menilainya, dan wajib memakai yang tertinggi",
-  kaiara: "Sonnet menulis sampai 3 calon naskah; Opus sebagai juri menilai 1-10 dan memilih yang terbaik untuk diproduksi",
+  kaiara: "Jam 19:30 Sonnet mencari yang sedang ramai (web search) dan menulis 10 naskah; Opus menilai peluang views-nya, yang terbaik diproduksi malam itu",
   standup: "Jam 19:00 Sonnet mencari topik viral (web search) dan menulis 8 naskah; Opus menilai peluang views-nya, yang terbaik diproduksi malam itu",
 };
 

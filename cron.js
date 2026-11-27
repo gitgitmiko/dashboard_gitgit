@@ -17,6 +17,7 @@ const MAX_TIMELINE = 8; // job yang jalan lebih sering dari ini per hari masuk "
 // Job crontab yang dikenal: log-nya, channel-nya, dan apakah log-nya berformat produksi ("=== tgl jam" / "... lewati").
 const KNOWN = [
   { re: /nostalgia-reels\/daily\.sh/, log: "nostalgia-reels/runs/daily.log", channel: "Kai & Kak Ara", what: "Produksi video", prod: true },
+  { re: /nostalgia-reels\/research\.sh/, log: "nostalgia-reels/runs/research.log", channel: "Kai & Kak Ara", what: "Riset & juri naskah", prod: true },
   { re: /gitgit_standup\/research\.sh/, log: "gitgit_standup/runs/research.log", channel: "Gitgit Stand-up", what: "Riset & juri materi", prod: true },
   { re: /gitgit_standup\/daily\.sh/, log: "gitgit_standup/runs/daily.log", channel: "Gitgit Stand-up", what: "Produksi video", prod: true },
   { re: /konten-arsip\.py/, log: () => join(HOME, "cron/konten-arsip.log"), channel: "Arsip", what: "Salin konten ke files.gitgitmiko.my.id" },
