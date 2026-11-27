@@ -18,7 +18,6 @@ const MAX_TIMELINE = 8; // job yang jalan lebih sering dari ini per hari masuk "
 const KNOWN = [
   { re: /nostalgia-reels\/daily\.sh/, log: "nostalgia-reels/runs/daily.log", channel: "Kai & Kak Ara", what: "Produksi video", prod: true },
   { re: /gitgit_standup\/daily\.sh/, log: "gitgit_standup/runs/daily.log", channel: "Gitgit Stand-up", what: "Produksi video", prod: true },
-  { re: /nostalgia-reels.*audit\.py/, log: "nostalgia-reels/runs/audit.log", channel: "Kai & Kak Ara", what: "Audit naskah mingguan" },
   { re: /konten-arsip\.py/, log: () => join(HOME, "cron/konten-arsip.log"), channel: "Arsip", what: "Salin konten ke files.gitgitmiko.my.id" },
   { re: /run_scrape\.sh/, log: () => join(REPOS, `scraper-data-gitgit/data/logs/scrape-${wibDay()}.log`), channel: "Scraper", what: "Scrape data" },
   { re: /run-catalog-watch\.sh/, log: () => join(HOME, "cron/scraper/scraper.log"), channel: "WEBUNIME", what: "Pantau katalog" },
