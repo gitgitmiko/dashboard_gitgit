@@ -20,7 +20,7 @@ import * as hermesChat from "./hermes-chat.js";
 import { dbDatabases, dbOverview, dbQueries, dbRows, dbTables } from "./db-monitor.js";
 import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnouncement } from "./apps.js";
 import { automationStatus } from "./cron.js";
-import { IDEAS } from "./ideas.js";
+import { IDEAS, whatifPerformance } from "./ideas.js";
 import { callback as tiktokCallback, disconnect as tiktokDisconnect, loginUrl as tiktokLoginUrl, publish as tiktokPublish,
   publishStatus as tiktokPublishStatus, schedule as tiktokSchedule, tiktokStatus,
   unschedule as tiktokUnschedule, videoPath as tiktokVideoPath } from "./tiktok.js";
@@ -2256,6 +2256,17 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, settings: full(saved), defaults: DEFAULTS, choices: CHOICES });
     } catch (err) {
       sendJson(res, err.status || 500, { ok: false, message: err.message });
+    }
+    return;
+  }
+
+  // Performa channel whatif (YouTube Analytics di data/analytics), untuk kartu di tab Sosmed → YouTube.
+  if (path === `${base}/api/analytics/whatif` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    try {
+      sendJson(res, 200, { ok: true, ...(await whatifPerformance()) });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.message });
     }
     return;
   }

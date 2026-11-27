@@ -77,4 +77,27 @@ async function standup() {
   return { items };
 }
 
+/** Performa channel whatif 30 hari (YouTube Analytics yang ditarik n8n tiap 05:30 ke data/analytics): per video
+ *  views, % ditonton, dan detik penonton mulai pergi (saat yang masih menonton < 60%, rumus yang sama dengan riset). */
+export async function whatifPerformance() {
+  const dir = join(WHATIF, "data/analytics");
+  const data = await readJson(join(dir, "videos.json")).catch(() => null);
+  if (!data) return { at: null, videos: [] };
+  const videos = await Promise.all(
+    (data.videos || []).map(async (v) => {
+      const curve = (await readJson(join(dir, "retention", `${v.video}.json`)).catch(() => null))?.curve || [];
+      // Panjang video diturunkan dari durasi tonton rata-rata dan persentasenya.
+      const length = v.averageViewPercentage ? v.averageViewDuration / (v.averageViewPercentage / 100) : null;
+      const drop = curve.find((p) => p.watch != null && p.watch < 0.6);
+      return {
+        id: v.video, title: v.title, uploaded: v.uploaded, slot: v.slot, mode: v.mode, seri: v.seri,
+        views: v.views ?? 0, pct: v.averageViewPercentage ?? null, avg: v.averageViewDuration ?? null,
+        length: length ? Math.round(length) : null, drop: drop && length ? Math.round(drop.t * length) : null,
+        likes: v.likes ?? 0, shares: v.shares ?? 0, comments: v.comments ?? 0, subs: v.subscribersGained ?? 0,
+      };
+    }),
+  );
+  return { at: data.at || null, videos };
+}
+
 export const IDEAS = { whatif, kaiara, standup };

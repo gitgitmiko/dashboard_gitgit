@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { BusyBanner, DateFilter, ErrText, ExtLink, fmtDayLong, fmtMinSec, PreviewLink, publicPreviewUrl, Thumb, VideoBadge } from "@/components/automation";
 import { IdeasCard } from "@/components/ideas";
+import { PerformanceCard } from "@/components/performance";
 import { ErrorNote, LogView, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -158,6 +159,8 @@ export function Whatif({ active }: { active: boolean }) {
       </Card>
 
       <IdeasCard channel="whatif" active={active} />
+
+      <PerformanceCard active={active} />
 
       <Card className="gap-3 pb-3">
         <CardHeader>
