@@ -1712,7 +1712,7 @@ const server = createServer(async (req, res) => {
   const path = pathname.replace(/\/+$/, "") || "/";
   const base = BASE;
 
-  if (isLockedPublicHost(req) && !(path.startsWith(`${base}/preview/whatif/`) || path.startsWith(`${base}/preview/duo/`))) {
+  if (isLockedPublicHost(req) && !/^\/preview\/(whatif|duo|standup)\//.test(path.slice(base.length))) {
     if (req.method === "GET" || req.method === "HEAD") {
       res.writeHead(302, { Location: `https://${DASHBOARD_HOST}/`, "Cache-Control": "no-store" });
       res.end();
@@ -1873,15 +1873,25 @@ const server = createServer(async (req, res) => {
 
   // Preview video stand-up yang belum terupload (sesudah terupload, tonton di YouTube). Diteruskan dari API outbox
   // lengkap dengan header Range, supaya pemutar di browser bisa seek; kunci API tidak pernah dikirim ke browser.
-  const suVideo = /^\/api\/standup\/video\/([\w-]+)\.mp4$/.exec(path.slice(base.length));
+  // /api/standup/video butuh login; /preview/standup publik seperti preview What If, hanya selama belum terupload.
+  const suVideo = /^\/(api\/standup\/video|preview\/standup)\/([\w-]+)\.mp4$/.exec(path.slice(base.length));
   if (path.startsWith(base) && suVideo && (req.method === "GET" || req.method === "HEAD")) {
+    const isPublic = suVideo[1] === "preview/standup";
+    if (!isPublic && !requireAuth(req, res)) return;
     if (!STANDUP_API_URL || !STANDUP_API_TOKEN) {
       send(res, 503, "API stand-up belum dikonfigurasi");
       return;
     }
+    if (isPublic) {
+      const rows = await fetchMonitor(YT_MONITORS.standup, "history").catch(() => []);
+      if (!rows.some((r) => r.run === suVideo[2] && r.status !== "uploaded")) {
+        send(res, 404, "Link preview sudah tidak berlaku (video sudah terupload ke YouTube).");
+        return;
+      }
+    }
     let up;
     try {
-      up = await fetch(`${STANDUP_API_URL}/api/videos/${suVideo[1]}.mp4`, {
+      up = await fetch(`${STANDUP_API_URL}/api/videos/${suVideo[2]}.mp4`, {
         headers: { "X-Token": STANDUP_API_TOKEN, ...(req.headers.range ? { Range: req.headers.range } : {}) },
       });
     } catch {
@@ -1892,7 +1902,7 @@ const server = createServer(async (req, res) => {
       send(res, up.status, up.status === 404 ? "Video tidak ditemukan." : "Gagal mengambil video.");
       return;
     }
-    const headers = { "Cache-Control": "private, max-age=3600" };
+    const headers = { "Cache-Control": isPublic ? "no-store" : "private, max-age=3600" };
     for (const h of ["content-type", "content-length", "content-range", "accept-ranges"]) {
       if (up.headers.get(h)) headers[h] = up.headers.get(h);
     }

@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { DateFilter, ErrText, ExtLink, fmtDayLong, PreviewLink, Thumb, VideoBadge } from "@/components/automation";
+import { DateFilter, ErrText, ExtLink, fmtDayLong, PreviewLink, publicPreviewUrl, Thumb, VideoBadge } from "@/components/automation";
 import { ErrorNote, LogView, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -33,7 +33,8 @@ const logTone = (l: string) => (/failed|error|gagal/i.test(l) ? "err" : /uploade
 const thumbOf = (r: Run) => (r.youtube_id ? `https://i.ytimg.com/vi/${r.youtube_id}/mqdefault.jpg` : `${BASE}/api/standup/thumb/${r.run}`);
 const ytUrl = (r: Run) => (r.youtube_id ? `https://www.youtube.com/watch?v=${r.youtube_id}` : null);
 // Yang belum terupload bisa ditonton langsung: dashboard meneruskan videonya dari API outbox (butuh login).
-const previewUrl = (r: Run) => `${BASE}/api/standup/video/${r.run}.mp4`;
+// Link publik (tanpa login, seperti preview What If); dashboard berhenti melayaninya begitu videonya terupload.
+const previewUrl = (r: Run) => publicPreviewUrl(`/preview/standup/${r.run}.mp4`);
 const watchHref = (r: Run) => ytUrl(r) ?? previewUrl(r);
 
 export function Standup({ active }: { active: boolean }) {
