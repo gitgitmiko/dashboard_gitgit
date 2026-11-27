@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Camera, Drama, Gamepad2, Clapperboard, Mic, Music2, SquarePlay, Users } from "lucide-react";
+import { Camera, Drama, Gamepad2, Clapperboard, Mic, SquarePlay } from "lucide-react";
 import { DateFilter, ErrText, ExtLink, PostBadge, PreviewLink, publicPreviewUrl, Thumb } from "@/components/automation";
 import { SubTabs, type SubTabDef } from "@/components/subtabs";
 import { IdeasCard } from "@/components/ideas";
@@ -11,7 +11,6 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, qs } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
-import { TikTok } from "@/pages/tiktok";
 import { Whatif } from "@/pages/whatif";
 import { Standup } from "@/pages/standup";
 
@@ -344,13 +343,9 @@ function Youtube({ active }: { active: boolean }) {
   return <SubTabs tabs={YOUTUBES} storageKey="dg-sosmed-youtube" active={active} />;
 }
 
-const SUBTABS: SubTabDef<"instagram" | "facebook" | "youtube" | "tiktok">[] = [
+const SUBTABS: SubTabDef<"instagram" | "youtube">[] = [
   { id: "instagram", label: "Instagram", icon: Camera, Page: Instagram },
-  {
-    id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => <MetaPosts platform="facebook" title="Facebook" active={active} />,
-  },
   { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Youtube },
-  { id: "tiktok", label: "TikTok", icon: Music2, Page: TikTok },
 ];
 export function Sosmed({ active }: { active: boolean }) {
   return <SubTabs tabs={SUBTABS} storageKey="dg-sosmed-tab" active={active} />;

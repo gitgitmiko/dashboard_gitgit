@@ -9,7 +9,6 @@ import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableR
 import { api } from "@/lib/api";
 import { fmtShort } from "@/lib/format";
 import { kindLabel, type Overview as SosmedOverview, slotStatus } from "@/pages/sosmed";
-import { type Status as TikTokStatus, tiktokSlots } from "@/pages/tiktok";
 
 // Tab Otomasi: satu linimasa hari ini dari semua otomasi (produksi, riset, upload, posting) lintas channel, supaya
 // "apa yang gagal hari ini dan kapan" terjawab sekali lihat. Upload/posting memakai endpoint & cache tab Sosmed.
@@ -80,8 +79,6 @@ export function Cron({ active }: { active: boolean }) {
     whatif: useQuery({ queryKey: ["wi-overview"], queryFn: () => api<YtOverview>("/api/whatif/overview"), refetchInterval: poll }),
     standup: useQuery({ queryKey: ["su-overview"], queryFn: () => api<YtOverview>("/api/standup/overview"), refetchInterval: poll }),
     ig: useQuery({ queryKey: ["sosmed-overview", "instagram", ""], queryFn: () => api<SosmedOverview>("/api/sosmed/overview?platform=instagram"), refetchInterval: poll }),
-    fb: useQuery({ queryKey: ["sosmed-overview", "facebook", ""], queryFn: () => api<SosmedOverview>("/api/sosmed/overview?platform=facebook"), refetchInterval: poll }),
-    tiktok: useQuery({ queryKey: ["tiktok"], queryFn: () => api<TikTokStatus>("/api/tiktok"), refetchInterval: poll }),
   };
   const auto = qs.auto.data;
   const now = auto?.minutes ?? 0;
@@ -92,8 +89,6 @@ export function Cron({ active }: { active: boolean }) {
         ...ytUploads("Apa yang terjadi jika", qs.whatif.data, now),
         ...ytUploads("Gitgit Stand-up", qs.standup.data, now),
         ...metaPosts("Instagram", qs.ig.data),
-        ...metaPosts("Facebook", qs.fb.data),
-        ...(qs.tiktok.data?.connected ? tiktokSlots(qs.tiktok.data).map((s) => ({ at: s.slot, channel: "TikTok", kind: "Posting TikTok", status: POST[s.status] ?? "waiting", detail: s.item?.title })) : []),
       ].sort((a, b) => a.at.localeCompare(b.at) || a.channel.localeCompare(b.channel))
     : [];
   const shown = rows.filter((r) => show === "all" || (show === "bad" ? bad(r.status) : r.status === "waiting"));

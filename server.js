@@ -22,7 +22,7 @@ import { appIcon, appsStatus, deleteAnnouncement, draftAnnouncement, postAnnounc
 import { automationStatus } from "./cron.js";
 import { IDEAS } from "./ideas.js";
 import { callback as tiktokCallback, disconnect as tiktokDisconnect, loginUrl as tiktokLoginUrl, publish as tiktokPublish,
-  publishStatus as tiktokPublishStatus, schedule as tiktokSchedule, startScheduler as tiktokScheduler, tiktokStatus,
+  publishStatus as tiktokPublishStatus, schedule as tiktokSchedule, tiktokStatus,
   unschedule as tiktokUnschedule, videoPath as tiktokVideoPath } from "./tiktok.js";
 
 const execFileAsync = promisify(execFile);
@@ -2553,7 +2553,6 @@ server.on("upgrade", (req, socket, head) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Dashboard listening on http://${HOST}:${PORT}${BASE}/`);
-  tiktokScheduler();
   // Sesi Remote Claude yang masih hidup dari sebelum restart disambungkan lagi, bukan dibuat baru.
   if (existsSync(PTY_BRIDGE) && existsSync(PYTHON)) {
     restoreRemoteSessions({ reposDir: REPOS_DIR, termSessions, createTermSession, maxTerm: MAX_TERM })
