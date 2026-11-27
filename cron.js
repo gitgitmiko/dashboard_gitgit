@@ -209,8 +209,12 @@ export async function automationStatus() {
   const { stdout } = await execFileAsync("crontab", ["-l"], { maxBuffer: 1 << 20 });
   const jobs = parseCrontab(stdout);
   const timeline = await cronTimeline(jobs, now);
-  // Riset ide whatif jalan di scheduler service whatif mulai 00:00 dan menulis data/ideas/<hari>.json.
-  const ideas = existsSync(join(WHATIF_IDEAS, `${now.day}.json`));
-  timeline.push({ at: "00:00", channel: "Apa yang terjadi jika", kind: "Riset", what: "Riset ide 5 slot", status: ideas ? "ok" : now.minutes >= 60 ? "missed" : "running", detail: ideas ? "Ide hari ini tersimpan" : "Belum ada ide hari ini", source: "whatif" });
+  // Riset whatif jalan di scheduler service whatif mulai 19:00 (diulang sampai tengah malam kalau gagal) dan menulis
+  // data/ideas/<besok>.json berisi 5 naskah yang sudah dijuri dan dicek fakta.
+  const tomorrow = new Date(Date.parse(`${now.day}T12:00:00Z`) + 864e5).toISOString().slice(0, 10);
+  const ideas = existsSync(join(WHATIF_IDEAS, `${tomorrow}.json`));
+  timeline.push({ at: "19:00", channel: "Apa yang terjadi jika", kind: "Riset", what: "Riset & juri naskah besok", source: "whatif",
+    status: ideas ? "ok" : now.minutes < 19 * 60 ? "waiting" : "running",
+    detail: ideas ? `Naskah untuk ${tomorrow} siap` : now.minutes < 19 * 60 ? "Riset, 10 draf Sonnet, juri & cek fakta Opus" : "Sedang riset (diulang sampai 23:59 kalau gagal)" });
   return { day: now.day, minutes: now.minutes, timeline, periodic: await periodicJobs(jobs, now) };
 }

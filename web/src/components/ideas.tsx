@@ -12,8 +12,10 @@ type Cand = { text: string; score?: number | null; chosen: boolean };
 type WhatifData = {
   date: string | null;
   insight: string;
+  juri: string | null;
+  drafts: { topic: string; mode: string; title: string; nilai: number | null; alasan: string; slot: string | null; status: string | null }[];
   items: {
-    slot: string; mode: string; seri: string; topic: string; angle: string; hook: string;
+    slot: string; mode: string; seri: string; topic: string; angle: string; hook: string; nilai: number | null; alasan: string;
     inspired: { title: string; views: number; why: string }[];
     run: { id: string; title: string | null; status: string } | null;
     unrelated: string | null;
@@ -26,7 +28,7 @@ type StandupData = { items: { run: string; judul: string; created: string; statu
 
 const UPLOAD: Record<string, string> = { slot1: "10:00", slot2: "12:00", slot3: "15:00", slot4: "18:00", slot5: "20:00" };
 const DESC = {
-  whatif: "Opus meriset Shorts yang sedang meledak lalu menyusun 5 ide sehari; penulis membuat 5 kandidat kalimat pembuka, menilainya, dan wajib memakai yang tertinggi",
+  whatif: "Jam 19:00 Sonnet meriset Shorts yang sedang meledak dan menulis 10 naskah untuk besok; Opus menilai peluang views-nya, 4 fakta + 1 horor terbaik dicek fakta lalu diproduksi",
   kaiara: "Jam 19:30 Sonnet mencari yang sedang ramai (web search) dan menulis 10 naskah; Opus menilai peluang views-nya, yang terbaik diproduksi malam itu",
   standup: "Jam 19:00 Sonnet mencari topik viral (web search) dan menulis 8 naskah; Opus menilai peluang views-nya, yang terbaik diproduksi malam itu",
 };
@@ -73,9 +75,20 @@ function Whatif({ d }: { d: WhatifData }) {
           <p className="mt-1">{d.insight}</p>
         </div>
       )}
+      {d.drafts.length > 0 && (
+        <div>
+          <Label>Draf naskah dan nilai juri {d.juri === "opus" ? "Opus" : d.juri || ""}</Label>
+          <Candidates
+            items={[...d.drafts]
+              .sort((a, b) => (b.nilai ?? 0) - (a.nilai ?? 0))
+              .map((x) => ({ text: `${x.title || x.topic} · ${x.mode}${x.slot ? ` · tayang ${UPLOAD[x.slot]}` : x.status ? ` · ${x.status}` : ""}`, score: x.nilai, chosen: Boolean(x.slot) }))}
+          />
+        </div>
+      )}
       {d.items.map((i, k) => (
         <Item key={i.slot} open={k === 0} title={`${UPLOAD[i.slot] || i.slot} · ${i.topic}`} meta={`${i.mode} · seri ${i.seri}${i.run?.title ? ` · ${i.run.title}` : i.unrelated ? "" : " · belum diproduksi"}`}>
           <p>{i.angle}</p>
+          {i.alasan && <p className="text-xs text-muted-foreground">Alasan juri ({i.nilai}): {i.alasan}</p>}
           {i.unrelated && <Missing>Slot ini sudah diproduksi sebelum riset selesai, tanpa ide ini: "{i.unrelated}".</Missing>}
           {i.hooks.length ? (
             <div>

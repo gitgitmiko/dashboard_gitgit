@@ -18,7 +18,7 @@ const readJson = async (f) => JSON.parse(await readFile(f, "utf8"));
 async function whatif() {
   const dir = join(WHATIF, "data/ideas");
   const files = existsSync(dir) ? (await readdir(dir)).filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort() : [];
-  if (!files.length) return { date: null, insight: "", items: [] };
+  if (!files.length) return { date: null, insight: "", items: [], drafts: [], juri: null };
   const date = files.at(-1).slice(0, 10);
   const ideas = await readJson(join(dir, files.at(-1)));
   const researched = (await stat(join(dir, files.at(-1)))).mtimeMs;
@@ -35,21 +35,22 @@ async function whatif() {
     const r = runs[i.slot];
     const run = r && Date.parse(r.started_at) >= researched ? r : null;
     let hooks = [];
-    if (run) {
-      const s = await readJson(join(WHATIF, "runs", run.id, "script.json")).catch(() => null);
+    // Naskah jadi dari riset 19:00 sudah membawa kandidat hook-nya; tanpa itu dibaca dari produksinya.
+    if (run || i.script) {
+      const s = i.script || (await readJson(join(WHATIF, "runs", run.id, "script.json")).catch(() => null));
       const scores = s?.hook_scores || [];
       const best = scores.length ? scores.indexOf(Math.max(...scores)) : -1;
       hooks = (s?.hook_candidates || []).map((text, k) => ({ text, score: scores[k] ?? null, chosen: k === best }));
     }
     items.push({
-      slot: i.slot, mode: i.mode, seri: i.seri, topic: i.topic, angle: i.angle, hook: i.hook,
+      slot: i.slot, mode: i.mode, seri: i.seri, topic: i.topic, angle: i.angle, hook: i.hook, nilai: i.nilai ?? null, alasan: i.alasan || "",
       inspired: (i.inspired_by || []).map((v) => ({ title: v.title, views: v.views, why: v.why })),
       run: run ? { id: run.id, title: run.title, status: run.status } : null,
       unrelated: r && !run ? r.title : null,
       hooks,
     });
   }
-  return { date, insight: ideas.insight || "", items };
+  return { date, insight: ideas.insight || "", items, drafts: ideas.drafts || [], juri: ideas.juri || null };
 }
 
 /** Naskah Kai & Kak Ara terakhir: calon-calon naskah, nilai juri Opus, dan alasannya (tersimpan sejak 27 Nov 2026). */
