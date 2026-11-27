@@ -321,7 +321,7 @@ function UsageStrip({ active }: { active: boolean }) {
 function useConversation(repo: string, id: string | null) {
   const [events, setEvents] = useState<Ev[]>([]);
   const [running, setRunning] = useState(false);
-  const [model, setModel] = useState("pro");
+  const [model, setModel] = useState("flash");
   const [tokens, setTokens] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const qc = useQueryClient();
@@ -336,7 +336,7 @@ function useConversation(repo: string, id: string | null) {
       if (e.type === "snapshot") {
         setEvents(e.events);
         setRunning(e.running);
-        setModel(e.model || "pro");
+        setModel(e.model || "flash");
         setTokens(e.tokens || 0);
         if (!e.running) es.close();
       } else if (e.type === "event") {
@@ -478,6 +478,11 @@ function Chat({ repo, id, onCreated, onBack, showBack }: { repo: Repo; id: strin
           </p>
         </div>
         {tokens > 0 && <span className="text-xs text-muted-foreground tabular-nums" title="Token yang dipakai percakapan ini">{fmtTok(tokens)} token</span>}
+        {tokens > 250_000 && (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700" title="Percakapan ini sudah berat: tiap langkah membawa riwayat besar, rawan cache miss & 429. Mulai chat baru jauh lebih hemat kredit.">
+            konteks berat
+          </span>
+        )}
         {running && (
           <Badge variant="warning" className="gap-1.5">
             <LoaderCircle className="animate-spin" /> Bekerja
@@ -578,7 +583,7 @@ function Chat({ repo, id, onCreated, onBack, showBack }: { repo: Repo; id: strin
                   type="button"
                   onClick={() => setModel(m)}
                   className={cn("rounded-md px-2.5 py-1 text-xs font-medium", model === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
-                  title={m === "pro" ? "mimo-v2.6-pro: lebih pintar, lebih lambat" : "mimo-v2.6-flash: cepat, untuk tugas ringan"}
+                  title={m === "pro" ? "mimo-v2.6-pro: lebih pintar untuk tugas berat (lebih boros kredit)" : "mimo-v2.6-flash: cepat & hemat kredit (default)"}
                 >
                   {MODEL_LABEL[m]}
                 </button>

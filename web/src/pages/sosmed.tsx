@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Camera, Drama, Gamepad2, Clapperboard, Mic, Music2, SquarePlay, Users } from "lucide-react";
 import { DateFilter, ErrText, ExtLink, PostBadge, PreviewLink, publicPreviewUrl, Thumb } from "@/components/automation";
 import { SubTabs, type SubTabDef } from "@/components/subtabs";
-import { ErrorNote, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
+import { ErrorNote, LogView, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -71,31 +71,36 @@ const slotStatus = (s: Slot) => {
   return Number.isNaN(h) || wibMinutes() - (h * 60 + (m || 0)) >= 10 ? "missed" : "prepared";
 };
 const kindLabel = (x: { label?: string; kind: string }) => x.label || KIND[x.kind] || x.kind;
+const logTone = (l: string) => (/gagal|error|traceback/i.test(l) ? "err" : /posted|siap|diperbarui/.test(l) ? "ok" : "");
 // Tanggal produksi video outbox (mis. "2026-11-24") ditampilkan pendek, sejajar jam produksi konten.
 const fmtDay = (d?: string | null) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString("id-ID", { day: "numeric", month: "short" }) : "—");
 
-function AccountSchedule({ a }: { a: Account }) {
-  const duo = a.schedule.some((s) => s.kind === "duo_reel");
+// Satu kartu jadwal seperti tab YouTube; kolom Akun hanya muncul bila ada lebih dari satu akun.
+function ScheduleCard({ title, accounts }: { title: string; accounts: Account[] }) {
+  const duo = accounts.some((a) => a.schedule.some((s) => s.kind === "duo_reel"));
+  const many = accounts.length > 1;
+  const state = (a: Account) =>
+    !a.enabled ? <Badge variant="outline">Nonaktif</Badge> : !a.connected ? <Badge variant="destructive">Belum terhubung</Badge> : <Badge variant="success">Aktif</Badge>;
+  const rows = accounts.flatMap((a) => a.schedule.map((s) => ({ a, s })));
   return (
-    <Card className="gap-3 pb-2">
+    <Card className="gap-3 pb-3">
       <CardHeader>
         <div className="min-w-0">
-          <CardTitle className="truncate">{a.handle || a.key}</CardTitle>
+          <CardTitle>Jadwal hari ini · {title}</CardTitle>
           <CardDescription className="mt-1.5">
-            {a.brand_name} · kategori {a.category} ·{" "}
+            {accounts.map((a) => `${a.brand_name} (${a.handle || a.key}) · kategori ${a.category}`).join(" · ")} ·{" "}
             {duo
               ? "produksi video 01:17 & 13:17 WIB ke outbox nostalgia-reels, diunggah n8n saat slot"
               : "konten dibuat scraper saat slot, diunggah n8n"}
           </CardDescription>
         </div>
-        <CardAction>
-          {!a.enabled ? <Badge variant="outline">Nonaktif</Badge> : !a.connected ? <Badge variant="destructive">Belum terhubung</Badge> : <Badge variant="success">Aktif</Badge>}
-        </CardAction>
+        {!many && accounts[0] && <CardAction>{state(accounts[0])}</CardAction>}
       </CardHeader>
-      <CardContent className="px-2">
+      <CardContent className="px-2 sm:px-3">
         <Table>
           <TableHeader>
             <TableRow>
+              {many && <TableHead className="hidden sm:table-cell">Akun</TableHead>}
               <TableHead>Jam</TableHead>
               <TableHead>Produksi</TableHead>
               <TableHead>Status</TableHead>
@@ -103,22 +108,29 @@ function AccountSchedule({ a }: { a: Account }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {a.schedule.map((s) => {
+            {!rows.length && <TableEmpty cols={many ? 5 : 4}>Tidak ada jadwal hari ini</TableEmpty>}
+            {rows.map(({ a, s }) => {
               // Konten yang sudah diproduksi (baris postingan) menampilkan judulnya; slot yang belum
               // jalan memakai perkiraan video outbox yang bisa dipratinjau.
               const post = s.platforms.find((p) => p.status === "posted") || s.platforms.find((p) => p.created_at);
-              const title = post?.title || s.forecast?.title || kindLabel(s);
+              const content = post?.title || s.forecast?.title || kindLabel(s);
               const link = post?.permalink || post?.image_url || null;
               const preview = s.forecast ? publicPreviewUrl(`/preview/duo/${s.forecast.run}.mp4`) : null;
               const produce = post?.created_at ? fmtShort(post.created_at).slice(-5) : s.forecast ? fmtDay(s.forecast.created) : s.past ? "—" : "saat slot";
               const err = s.platforms.find((p) => p.error)?.error || (!s.platforms.some((p) => p.status) && slotStatus(s) === "missed" ? "Slot tidak dipicu oleh n8n" : null);
               return (
-                <TableRow key={s.time + s.kind}>
+                <TableRow key={`${a.key}-${s.time}-${s.kind}`}>
+                  {many && (
+                    <TableCell className="hidden align-top sm:table-cell">
+                      <span className="text-sm">{a.handle || a.key}</span>
+                    </TableCell>
+                  )}
                   <TableCell className="align-top whitespace-nowrap">
                     <span className="tabular font-medium">{s.time}</span> <span className="text-xs text-muted-foreground">{kindLabel(s)}</span>
                   </TableCell>
                   <TableCell className="tabular align-top text-muted-foreground">{produce}</TableCell>
                   <TableCell className="max-w-56 min-w-24 align-top">
+                    {many && <p className="text-xs text-muted-foreground sm:hidden">{a.handle || a.key}</p>}
                     {s.platforms.map((p) => (
                       <div key={p.platform} className="flex flex-wrap items-center gap-1.5">
                         {s.platforms.length > 1 && <span className="text-xs text-muted-foreground">{p.platform.replace(/_reel$/, " Reel")}</span>}
@@ -134,13 +146,12 @@ function AccountSchedule({ a }: { a: Account }) {
                   </TableCell>
                   <TableCell className="hidden max-w-80 align-top sm:table-cell">
                     <ExtLink href={link}>{post?.permalink ? "Tonton" : "Lihat"}</ExtLink>
-                    <p className="mt-0.5 text-sm">{title}</p>
+                    <p className="mt-0.5 text-sm">{content}</p>
                     <PreviewLink href={preview} />
                   </TableCell>
                 </TableRow>
               );
             })}
-            {!a.schedule.length && <TableEmpty cols={4}>Tidak ada jadwal hari ini</TableEmpty>}
           </TableBody>
         </Table>
       </CardContent>
@@ -149,7 +160,7 @@ function AccountSchedule({ a }: { a: Account }) {
 }
 
 /** Posting otomatis satu platform Meta (Instagram/Facebook) dari scraper-social-api. `account` mengunci satu akun (sub-tab per konten). */
-function MetaPosts({ platform, account: fixedAccount, active }: { platform: string; account?: string; active: boolean }) {
+function MetaPosts({ platform, account: fixedAccount, title, active }: { platform: string; account?: string; title: string; active: boolean }) {
   const [accountPick, setAccountPick] = useState("");
   const account = fixedAccount || accountPick;
   const [status, setStatus] = useState("");
@@ -169,6 +180,7 @@ function MetaPosts({ platform, account: fixedAccount, active }: { platform: stri
     refetchInterval: poll,
     placeholderData: keepPreviousData,
   });
+  const logs = useQuery({ queryKey: ["sosmed-logs"], queryFn: () => api<{ lines: string[] }>("/api/sosmed/logs?lines=200"), refetchInterval: poll });
   const d = ov.data;
 
   return (
@@ -191,16 +203,8 @@ function MetaPosts({ platform, account: fixedAccount, active }: { platform: stri
         />
       </div>
 
-      <div>
-        <h2 className="mb-3 text-sm font-semibold text-muted-foreground">Jadwal hari ini</h2>
-        <div className="grid gap-4 xl:grid-cols-2">
-          {d?.accounts.map((a) => (
-            <AccountSchedule key={a.key} a={a} />
-          ))}
-          {d && !d.accounts.length && <p className="text-sm text-muted-foreground">Belum ada akun.</p>}
-          {!d && !ov.error && <div className="h-60 animate-pulse rounded-xl border bg-card" />}
-        </div>
-      </div>
+      {!d && !ov.error && <div className="h-60 animate-pulse rounded-xl border bg-card" />}
+      {d && <ScheduleCard title={title} accounts={d.accounts} />}
 
       <Card className="gap-3 pb-3">
         <CardHeader>
@@ -211,6 +215,7 @@ function MetaPosts({ platform, account: fixedAccount, active }: { platform: stri
               onClick={() => {
                 ov.refetch();
                 posts.refetch();
+                logs.refetch();
               }}
             />
           </CardAction>
@@ -295,14 +300,26 @@ function MetaPosts({ platform, account: fixedAccount, active }: { platform: stri
         </CardContent>
         {posts.data && <Pager page={posts.data.page} totalPages={posts.data.totalPages} onPage={setPage} info={` · ${posts.data.total} posting`} />}
       </Card>
+
+      <Card className="gap-3">
+        <CardHeader>
+          <CardTitle>Log service</CardTitle>
+          <CardAction>
+            <RefreshButton busy={logs.isFetching} onClick={() => logs.refetch()} />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <LogView lines={logs.data?.lines || []} tone={logTone} empty={logs.error?.message || (logs.data ? "Log kosong." : "Memuat…")} className="max-h-[50vh]" />
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
 // Tab Instagram dibagi per konten: dua akun fokus punya jadwal dan gaya posting sendiri.
 const INSTAGRAMS: SubTabDef<"game" | "kaiara">[] = [
-  { id: "game", label: "Info Game", icon: Gamepad2, Page: ({ active }) => <MetaPosts platform="instagram" account="game" active={active} /> },
-  { id: "kaiara", label: "Kai & Kak Ara", icon: Drama, Page: ({ active }) => <MetaPosts platform="instagram" account="kaiara" active={active} /> },
+  { id: "game", label: "Info Game", icon: Gamepad2, Page: ({ active }) => <MetaPosts platform="instagram" account="game" title="Info Game" active={active} /> },
+  { id: "kaiara", label: "Kai & Kak Ara", icon: Drama, Page: ({ active }) => <MetaPosts platform="instagram" account="kaiara" title="Kai & Kak Ara" active={active} /> },
 ];
 
 function Instagram({ active }: { active: boolean }) {
@@ -322,7 +339,7 @@ function Youtube({ active }: { active: boolean }) {
 const SUBTABS: SubTabDef<"instagram" | "facebook" | "youtube" | "tiktok">[] = [
   { id: "instagram", label: "Instagram", icon: Camera, Page: Instagram },
   {
-    id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => <MetaPosts platform="facebook" active={active} />,
+    id: "facebook", label: "Facebook", icon: Users, Page: ({ active }) => <MetaPosts platform="facebook" title="Facebook" active={active} />,
   },
   { id: "youtube", label: "YouTube", icon: SquarePlay, Page: Youtube },
   { id: "tiktok", label: "TikTok", icon: Music2, Page: TikTok },

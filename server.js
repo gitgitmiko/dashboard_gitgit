@@ -1338,7 +1338,7 @@ const YT_MONITORS = {
   standup: { url: STANDUP_API_URL, token: STANDUP_API_TOKEN, tokenName: "STANDUP_API_TOKEN", name: "Gitgit Stand-up", service: "gitgit-standup-api" },
 };
 
-async function fetchMonitor(mon, endpoint, params) {
+async function fetchMonitor(mon, endpoint, params = new URLSearchParams()) {
   if (!mon.token) throw httpError(503, `${mon.tokenName} belum di-set di .env dashboard`);
   const qs = new URLSearchParams();
   for (const key of ["status", "date", "page", "pageSize", "lines"]) {
@@ -1376,6 +1376,81 @@ async function standupHistory(params) {
     page,
     totalPages,
   };
+}
+
+// Log service yang ditulis journald (unit sistem maupun --user). Unit-unit itu dijalankan oleh user yang sama dengan
+// dashboard, jadi journalctl cukup tanpa sudo; barisnya dipangkas dari prefiks host/pid supaya enak dibaca.
+async function journalLogs(args, lines, match) {
+  let out;
+  try {
+    ({ stdout: out } = await execFileAsync("journalctl", [...args, "-n", "2000", "--no-pager", "-o", "short-iso"], { timeout: 6000, maxBuffer: 4 << 20 }));
+  } catch {
+    throw httpError(502, "Log service tidak bisa dibaca (journalctl gagal)");
+  }
+  const all = out
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => l.replace(/^\S+ \S+ [\w.-]+\[\d+\]: /, ""))
+    .filter((l) => !match || match.test(l));
+  return { lines: all.slice(-Math.max(20, Math.min(1000, lines || 200))) };
+}
+
+const STANDUP_SLOTS = ["10:00", "12:00", "15:00", "18:00", "20:00"];
+const LATE_MIN = 90; // n8n terbukti bisa telat ~1 jam mengambil video; jangan buru-buru menandai terlewat
+const slotMin = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3));
+
+/** Jam WIB suatu waktu: tanggal "YYYY-MM-DD" dan menit sejak tengah malam. */
+function wibClock(when) {
+  const [date, time] = new Date(when ?? Date.now()).toLocaleString("sv-SE", { timeZone: "Asia/Jakarta" }).split(" ");
+  const [h, m] = time.split(":").map(Number);
+  return { date, minutes: h * 60 + m };
+}
+
+/** Overview Gitgit Stand-up plus jadwal 5 slot hari ini. Outbox tidak menyimpan slot, jadi slotnya diturunkan dari
+ *  jam video diambil n8n (picked) dan urutan video yang masih menunggu — mengikuti bentuk schedule-nya whatif. */
+async function standupOverview() {
+  const [ov, rows] = await Promise.all([
+    fetchMonitor(YT_MONITORS.standup, "overview"),
+    fetchMonitor(YT_MONITORS.standup, "history"),
+  ]);
+  const now = wibClock();
+  const runs = [...rows].sort((a, b) => String(a.created || "").localeCompare(String(b.created || "")));
+
+  // Slot yang sudah terisi: video yang diambil n8n hari ini, dijendela [slot, slot berikutnya).
+  const taken = new Map();
+  const used = new Set();
+  for (const r of runs) {
+    const p = r.picked ? wibClock(r.picked) : null;
+    if (!p || p.date !== now.date) continue;
+    const i = STANDUP_SLOTS.findIndex((s, idx) => p.minutes >= slotMin(s) && p.minutes < (idx + 1 < STANDUP_SLOTS.length ? slotMin(STANDUP_SLOTS[idx + 1]) : 1440));
+    if (i >= 0 && !taken.has(i)) {
+      taken.set(i, r);
+      used.add(r.run);
+    }
+  }
+  // Sisa slot (yang belum lewat) memakai video outbox menunggu paling lama — urutan yang sama dengan n8n.
+  const pending = runs.filter((r) => !used.has(r.run) && r.status !== "uploaded");
+  let pi = 0;
+  const schedule = STANDUP_SLOTS.map((slot, i) => {
+    // Slot dianggap terlewat bila jamnya sudah lewat jauh ATAU slot sesudahnya sudah sempat mengambil video —
+    // berarti slot ini memang dilewati n8n, bukan hanya telat.
+    const late = now.minutes >= slotMin(slot) + LATE_MIN || STANDUP_SLOTS.slice(i + 1).some((_, j) => taken.has(i + 1 + j));
+    const run = taken.get(i) || (!late && pi < pending.length ? pending[pi++] : null);
+    return { slot, upload: slot, produce: run?.created || null, run, status: run ? run.status : late ? "missed" : "waiting" };
+  });
+
+  const weekAgo = new Date(Date.parse(now.date) - 6 * 864e5).toISOString().slice(0, 10);
+  const today = { uploaded: 0, failed: 0 };
+  const week = { uploaded: 0, failed: 0 };
+  for (const r of runs) {
+    const at = wibClock(r.picked || r.created);
+    if (at.date === now.date && r.status in today) today[r.status] += 1;
+    if (at.date >= weekAgo && r.status in week) week[r.status] += 1;
+  }
+  const nextIdx = STANDUP_SLOTS.findIndex((s) => now.minutes < slotMin(s));
+  const nextDate = nextIdx >= 0 ? now.date : new Date(Date.parse(now.date) + 864e5).toISOString().slice(0, 10);
+  const nextSlot = nextIdx >= 0 ? STANDUP_SLOTS[nextIdx] : STANDUP_SLOTS[0];
+  return { ...ov, today: { ...today, planned: STANDUP_SLOTS.length }, week, next: { at: `${nextDate}T${nextSlot}:00+07:00`, upload: nextSlot }, schedule };
 }
 
 function cctvRecordingFromFile(dateDir, name, st) {
@@ -1532,6 +1607,10 @@ async function tiktokApi(req, res, url, sub, { redirect, after }) {
     if (sub === "/disconnect" && req.method === "POST") {
       await tiktokDisconnect();
       return sendJson(res, 200, { ok: true });
+    }
+    if (sub === "/logs" && req.method === "GET") {
+      // Aktivitas TikTok ditulis dashboard ke journal-nya sendiri dengan prefiks "tiktok:".
+      return sendJson(res, 200, { ok: true, ...(await journalLogs(["--user", "-u", "dashboard-gitgit"], Number(url.searchParams.get("lines")), /tiktok:/i)) });
     }
     const m = /^\/(video|publish|status|schedule|unschedule)\/([a-z0-9-]+)$/.exec(sub);
     if (m && m[1] === "video" && (req.method === "GET" || req.method === "HEAD")) {
@@ -2218,6 +2297,32 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Restart service dashboard: unit yang sama dengan proses ini, jadi balasan harus keluar lebih dulu.
+  if (path === `${base}/api/service/restart` && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    let state = "";
+    try {
+      ({ stdout: state } = await execFileAsync("systemctl", ["--user", "show", "--property=ActiveState", "--value", "dashboard-gitgit"], { timeout: 5000 }));
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: `Gagal memeriksa service: ${err.message}` });
+      return;
+    }
+    state = state.trim();
+    // Unit tidak aktif berarti proses ini bukan miliknya; restart justru memicu unit gagal start berulang.
+    if (state !== "active" && state !== "activating") {
+      sendJson(res, 409, { ok: false, message: `Service dashboard-gitgit berstatus "${state || "?"}", tidak direstart. Jalankan dari terminal.` });
+      return;
+    }
+    sendJson(res, 200, { ok: true, message: "Service direstart" });
+    setTimeout(() => {
+      // --no-block: systemctl keluar setelah job antre, jadi tidak ikut terbunuh saat unit dihentikan.
+      spawn("systemctl", ["--user", "--no-block", "restart", "dashboard-gitgit"], { detached: true, stdio: "ignore" })
+        .on("error", (err) => console.error("Gagal restart dashboard-gitgit:", err.message))
+        .unref();
+    }, 800);
+    return;
+  }
+
   if (path === `${base}/api/free-usage` && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
@@ -2268,10 +2373,13 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if ((path === `${base}/api/sosmed/overview` || path === `${base}/api/sosmed/posts`) && req.method === "GET") {
+  if ((path === `${base}/api/sosmed/overview` || path === `${base}/api/sosmed/posts` || path === `${base}/api/sosmed/logs`) && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
-      sendJson(res, 200, { ok: true, ...(await (path.endsWith("/overview") ? focusOverview(url.searchParams) : focusPosts(url.searchParams))) });
+      const data = path.endsWith("/logs")
+        ? await journalLogs(["-u", "scraper-social-api"], Number(url.searchParams.get("lines")))
+        : await (path.endsWith("/overview") ? focusOverview(url.searchParams) : focusPosts(url.searchParams));
+      sendJson(res, 200, { ok: true, ...data });
     } catch (err) {
       sendJson(res, err.status || 502, { ok: false, message: err.message });
     }
@@ -2282,9 +2390,10 @@ const server = createServer(async (req, res) => {
   if (path.startsWith(base) && monMatch && req.method === "GET") {
     if (!requireAuth(req, res)) return;
     try {
-      const data = monMatch[1] === "standup" && monMatch[2] === "history"
-        ? await standupHistory(url.searchParams)
-        : await fetchMonitor(YT_MONITORS[monMatch[1]], monMatch[2], url.searchParams);
+      let data;
+      if (monMatch[1] === "standup" && monMatch[2] === "overview") data = await standupOverview();
+      else if (monMatch[1] === "standup" && monMatch[2] === "history") data = await standupHistory(url.searchParams);
+      else data = await fetchMonitor(YT_MONITORS[monMatch[1]], monMatch[2], url.searchParams);
       sendJson(res, 200, { ok: true, ...data });
     } catch (err) {
       sendJson(res, err.status || 502, { ok: false, message: err.message });

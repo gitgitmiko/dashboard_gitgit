@@ -22,7 +22,8 @@ const SKILLS = join(STORE, "skills");
 const BASE_URL = (process.env.MIMO_BASE_URL || "https://token-plan-sgp.xiaomimimo.com/v1").replace(/\/+$/, "");
 export const MODELS = { pro: "mimo-v2.6-pro", flash: "mimo-v2.6-flash" };
 const MAX_STEPS = 80;           // model calls per message before it must stop and report
-const TOOL_OUT = 30_000;        // characters of a tool result the model sees
+const TOOL_OUT = 10_000;        // characters of a tool result the model sees (each char is billed
+                                // every call; ask again with offset/limit instead of sending more)
 const SHOW_OUT = 4_000;         // characters of a tool result the page shows
 const CONTEXT_CHARS = 220_000;  // past this, old tool results are shortened before the next call
 export const UPLOADS = join(STORE, "_uploads");  // files attached in the chat, per repo
@@ -225,7 +226,7 @@ async function systemPrompt(repo) {
   for (const f of ["AGENTS.md", "CLAUDE.md", "README.md"]) {
     try {
       const t = await readFile(join(repo.path, f), "utf8");
-      notes += `\n\n--- ${f} ---\n${clip(t, f === "README.md" ? 6000 : 12000)}`;
+      notes += `\n\n--- ${f} ---\n${clip(t, f === "README.md" ? 3000 : 8000)}`;
       if (f !== "README.md") break;
     } catch {
       /* not there */
@@ -278,23 +279,56 @@ function dropOldImages(messages) {
 
 function shrinkContext(messages) {
   let total = messages.reduce((n, m) => n + lenOf(m), 0);
-  for (let i = 1; i < messages.length - 6 && total > CONTEXT_CHARS; i++) {
+  if (total <= CONTEXT_CHARS) return;
+  // each pass rewrites messages, which turns the whole prompt into a cache miss once (every
+  // token re-billed at the uncached rate) and the new plan rate-limits ~300K token/min, so
+  // oversized prompts earn 429s — pass must stay rare (hysteresis to 60%) but thorough:
+  // old tool results AND old long text alike, never the newest 6 messages. The walk runs
+  // BACKWARD and skips the head (Hermes-style head/tail protection): prompt caching only
+  // pays while the EARLIEST messages stay byte-identical, so the first rewritten message
+  // must sit as late as possible — rewriting message #1 first would flush the entire cache.
+  const head = Math.min(4, messages.length - 7);
+  for (let i = messages.length - 7; i >= head && total > CONTEXT_CHARS * 0.6; i--) {
     const m = messages[i];
     if (m.role === "tool" && m.content.length > 600) {
       total -= m.content.length - 200;
       m.content = `${m.content.slice(0, 200)}\n[output lama dipersingkat]`;
+    } else if (typeof m.content === "string" && m.content.length > 800) {
+      total -= m.content.length - 300;
+      m.content = `${m.content.slice(0, 300)}\n[teks lama dipotong]`;
+    } else if (Array.isArray(m.content)) {
+      for (const part of m.content) {
+        if (part.type === "text" && part.text.length > 800) {
+          total -= part.text.length - 300;
+          part.text = `${part.text.slice(0, 300)}\n[teks lama dipotong]`;
+        }
+      }
+    }
+    if (JSON.stringify(m.tool_calls || "").length > 2000) {
+      total -= JSON.stringify(m.tool_calls).length - 200;
+      m.tool_calls = m.tool_calls.map((c) => ({ ...c, function: { ...c.function, arguments: '{"_":"[argumen lama dipotong]"}' } }));
     }
   }
 }
 
 /** One model call, streamed. Calls onDelta for text/reasoning; returns the assistant message. */
 async function callModel(model, messages, signal, onDelta, tools = TOOLS) {
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: "POST",
-    signal,
-    headers: { Authorization: `Bearer ${apiKey()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, tools, stream: true, stream_options: { include_usage: true }, temperature: 0.3 }),
-  });
+  const body = JSON.stringify({ model, messages, tools, stream: true, stream_options: { include_usage: true }, temperature: 0.3 });
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      signal,
+      headers: { Authorization: `Bearer ${apiKey()}`, "Content-Type": "application/json" },
+      body,
+    });
+    if (res.status !== 429 || attempt >= 3) break;
+    // plan baru membatasi laju token per menit (429 "quota exhausted"); jendelanya bergulir
+    // cepat — tunggu sebentar lalu ulangi, jangan langsung gagalkan run
+    await res.text().catch(() => {});
+    await new Promise((r) => setTimeout(r, [30_000, 60_000, 60_000][attempt]));
+    if (signal.aborted) break;
+  }
   if (!res.ok) throw new Error(`MiMo ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const dec = new TextDecoder();
   let buf = "", content = "", reasoning = "", finish = null, usage = null;

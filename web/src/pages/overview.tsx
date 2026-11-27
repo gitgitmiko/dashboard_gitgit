@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Bot, Boxes, ChevronRight, Cpu, ExternalLink, Gauge, Globe, HardDrive, MemoryStick, Network, Plug, Router, Wifi } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Boxes, ChevronRight, Cpu, ExternalLink, Gauge, Globe, HardDrive, MemoryStick, Network, Plug, RotateCcw, Router, Wifi } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { CleanupButton } from "@/components/cleanup";
 import { Sparkline } from "@/components/sparkline";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +11,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { useAsk } from "@/lib/dialogs";
 import { fmtBytes, fmtDuration, level } from "@/lib/format";
 import { useStats } from "@/lib/stats";
 import { cn } from "@/lib/utils";
@@ -361,6 +363,57 @@ function AddressesCard() {
   );
 }
 
+function RestartButton() {
+  const ask = useAsk();
+  const [busy, setBusy] = useState(false);
+
+  async function restart() {
+    const yes = await ask({
+      title: "Restart service dashboard?",
+      description:
+        "Service akan berhenti beberapa detik lalu hidup lagi. Terminal web yang terbuka ikut tertutup, sesi login berakhir (harus masuk lagi), dan run MiMo yang sedang berjalan terputus lalu disambung otomatis.",
+      confirmLabel: "Restart",
+      destructive: true,
+    });
+    if (!yes) return;
+    setBusy(true);
+    try {
+      await api("/api/service/restart", { method: "POST" });
+      toast.success("Service direstart, tunggu beberapa detik…");
+    } catch (e) {
+      // Koneksi terputus di tengah restart itu sendiri bukan kegagalan; selain itu berhenti di sini.
+      if ((e as ApiError).status !== 0) {
+        toast.error((e as Error).message);
+        setBusy(false);
+        return;
+      }
+    }
+    // Sesi disimpan di memori, jadi begitu service hidup lagi cookie lama sudah tak berlaku: 401 dari /api/session
+    // adalah tandanya restart sukses (handler sesi di App otomatis membuka layar masuk). Status 0 = server masih
+    // mati, terus tunggu; 200 berarti server lama belum tersentuh, tetap tunggu sampai batas waktu.
+    const t0 = Date.now();
+    for (let i = 0; i < 30 && Date.now() - t0 < 30000; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        await api("/api/session");
+      } catch (e) {
+        if ((e as ApiError).status !== 0) {
+          setBusy(false);
+          return;
+        }
+      }
+    }
+    toast.error("Service tidak jalan direstart, coba lagi");
+    setBusy(false);
+  }
+
+  return (
+    <Button variant="outline-destructive" size="sm" disabled={busy} onClick={restart}>
+      <RotateCcw className={cn(busy && "animate-spin")} /> {busy ? "Restarting…" : "Restart service"}
+    </Button>
+  );
+}
+
 export function Overview() {
   const { data: s, error } = useStats();
   const free = useQuery({ queryKey: ["free-usage"], queryFn: () => api<FreeUsage>("/api/free-usage"), refetchInterval: 30000 });
@@ -384,9 +437,12 @@ export function Overview() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">{s ? `${s.hostname} · hidup ${fmtDuration(s.uptime_sec)}` : "Memuat…"}</p>
-        <CleanupButton />
+        <div className="flex items-center gap-2">
+          <RestartButton />
+          <CleanupButton />
+        </div>
       </div>
       {error && <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error.message}</p>}
 

@@ -34,6 +34,9 @@ const HINTS = {
   scope_not_authorized: "Izin posting belum diberikan, hubungkan ulang akun dan setujui semua izin.",
 };
 
+// Aktivitas dicatat ke journal dashboard dengan prefiks "tiktok:" (Sosmed → TikTok → Log service).
+const log = (msg) => console.log(`tiktok: ${msg}`);
+
 function fail(status, message) {
   const err = new Error(message);
   err.status = status;
@@ -112,6 +115,7 @@ export async function callback(params) {
   data.user = await userInfo(t.access_token);
   data.connected_at = new Date().toISOString();
   await save(data);
+  log(`akun dihubungkan (${data.user?.display_name || "tanpa nama"})`);
   return data.user;
 }
 
@@ -275,6 +279,7 @@ export async function publish(id, input, fromSchedule = false) {
   data.posts = data.posts || {};
   data.posts[id] = { publish_id, status: "PROCESSING_UPLOAD", privacy_level: privacy, title, at: new Date().toISOString(), open_id: data.token.open_id };
   await save(data);
+  if (!fromSchedule) log(`${id} diunggah ke TikTok (${privacy})`);
   return data.posts[id];
 }
 
@@ -300,6 +305,7 @@ export async function disconnect() {
   delete data.token;
   delete data.user;
   await save(data);
+  log("akun diputuskan");
 }
 
 // ---------------------------------------------------------------- schedule: approve now, post at the next free slot
@@ -315,12 +321,16 @@ export async function schedule(id, input) {
   data.scheduled = data.scheduled || {};
   data.scheduled[id] = { at, input, approved_at: new Date().toISOString(), open_id: data.token.open_id };
   await save(data);
+  log(`${id} dijadwalkan ${new Date(at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB`);
   return { at: new Date(at).toISOString() };
 }
 
 export async function unschedule(id) {
   const data = await load();
-  if (data.scheduled?.[id]) delete data.scheduled[id];
+  if (data.scheduled?.[id]) {
+    delete data.scheduled[id];
+    log(`${id} batal dijadwalkan`);
+  }
   await save(data);
 }
 

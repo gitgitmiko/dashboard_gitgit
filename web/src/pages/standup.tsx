@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { DateFilter, ErrText, ExtLink, Thumb, VideoBadge } from "@/components/automation";
+import { DateFilter, ErrText, ExtLink, fmtDayLong, PreviewLink, Thumb, VideoBadge } from "@/components/automation";
 import { ErrorNote, LogView, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -17,7 +17,15 @@ type Run = {
   picked?: string | null;
   error?: string;
 };
-type Overview = { pending: number; uploaded: number; failed: number; last: Run[] };
+type Schedule = { slot: string; upload: string; produce?: string | null; status: string; run: Run | null };
+type Overview = {
+  pending: number;
+  last: Run[];
+  today: { uploaded: number; failed: number; planned: number };
+  week: { uploaded: number; failed: number };
+  next: { at: string; upload: string } | null;
+  schedule: Schedule[];
+};
 type History = { runs: Run[]; total: number; page: number; totalPages: number };
 
 const logTone = (l: string) => (/failed|error|gagal/i.test(l) ? "err" : /uploaded|rendered|picked|ok/.test(l) ? "ok" : "");
@@ -26,6 +34,7 @@ const thumbOf = (r: Run) => (r.youtube_id ? `https://i.ytimg.com/vi/${r.youtube_
 const ytUrl = (r: Run) => (r.youtube_id ? `https://www.youtube.com/watch?v=${r.youtube_id}` : null);
 // Yang belum terupload bisa ditonton langsung: dashboard meneruskan videonya dari API outbox (butuh login).
 const previewUrl = (r: Run) => `${BASE}/api/standup/video/${r.run}.mp4`;
+const watchHref = (r: Run) => ytUrl(r) ?? previewUrl(r);
 
 export function Standup({ active }: { active: boolean }) {
   const [status, setStatus] = useState("");
@@ -47,19 +56,29 @@ export function Standup({ active }: { active: boolean }) {
   });
   const logs = useQuery({ queryKey: ["su-logs"], queryFn: () => api<{ lines: string[] }>("/api/standup/logs?lines=200"), refetchInterval: poll });
   const d = ov.data;
+  // Field jadwal & statistik harian datang dari backend yang baru; selagi service belum di-restart, pakai nilai
+  // kosong supaya tab tetap terbaca.
+  const today = d?.today ?? { uploaded: 0, failed: 0, planned: 5 };
+  const week = d?.week ?? { uploaded: 0, failed: 0 };
+  const schedule = d?.schedule ?? [];
   const last = d && [...d.last].reverse().find((r) => r.status === "uploaded");
 
   return (
     <div className="flex flex-col gap-5">
       <ErrorNote>{ov.error?.message || hist.error?.message}</ErrorNote>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard loading={!d} label="Menunggu di outbox" value={d?.pending} detail="Diambil n8n jam 10, 12, 15, 18, 20 WIB" />
-        <StatCard loading={!d} label="Terupload" value={d?.uploaded} detail="Total video di outbox" />
+        <StatCard loading={!d} label="Terupload hari ini" value={d && `${today.uploaded}/${today.planned}`} detail={d && `${today.failed} gagal hari ini`} />
         <StatCard
           loading={!d}
-          label="Gagal"
-          value={<span className={d?.failed ? "text-destructive" : undefined}>{d?.failed}</span>}
-          detail="Upload diulang maksimal 3 kali"
+          label="Gagal (7 hari)"
+          value={<span className={week.failed ? "text-destructive" : undefined}>{week.failed}</span>}
+          detail={d && `${week.uploaded} terupload · 7 hari terakhir`}
+        />
+        <StatCard
+          loading={!d}
+          label="Upload berikutnya"
+          value={d?.next?.upload || "—"}
+          detail={d?.next ? `${fmtDayLong(d.next.at)} · ${d.pending ?? 0} menunggu di outbox` : "Tidak ada lagi hari ini"}
         />
         <StatCard
           loading={!d}
@@ -69,12 +88,63 @@ export function Standup({ active }: { active: boolean }) {
         />
       </div>
 
-      <Card className="gap-3 pb-3">
+      <Card className="gap-3">
         <CardHeader>
           <div>
-            <CardTitle>Riwayat video</CardTitle>
+            <CardTitle>Jadwal hari ini · Gitgit Stand-up</CardTitle>
             <CardDescription className="mt-1.5">Stand-up comedy animasi Gitgit · materi MiMo 5x sehari (mulai 23:00 WIB) · suara Gemini · animasi Remotion · diupload n8n 10:00, 12:00, 15:00, 18:00, 20:00 WIB</CardDescription>
           </div>
+        </CardHeader>
+        <CardContent className="px-2 sm:px-3">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Upload</TableHead>
+                <TableHead>Produksi</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="hidden sm:table-cell">Video</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!d && <TableEmpty cols={4}>Memuat…</TableEmpty>}
+              {d && !schedule.length && <TableEmpty cols={4}>Tidak ada jadwal hari ini</TableEmpty>}
+              {schedule.map((s) => (
+                <TableRow key={s.slot}>
+                  <TableCell className="align-top whitespace-nowrap">
+                    <span className="tabular font-medium">{s.upload}</span> <span className="text-xs text-muted-foreground">WIB</span>
+                  </TableCell>
+                  <TableCell className="tabular align-top">{s.produce ? fmtShort(s.produce).slice(-5) : "—"}</TableCell>
+                  <TableCell className="align-top">
+                    <VideoBadge status={s.status} />
+                    <div className="sm:hidden">
+                      <ExtLink href={s.run && watchHref(s.run)} className="mt-1">
+                        {s.run && ytUrl(s.run) ? "Tonton" : "Preview"}
+                      </ExtLink>
+                      <PreviewLink href={s.run && s.run.status !== "uploaded" ? previewUrl(s.run) : null} />
+                    </div>
+                    <ErrText>{s.run?.error}</ErrText>
+                  </TableCell>
+                  <TableCell className="hidden max-w-80 align-top sm:table-cell">
+                    {s.run ? (
+                      <>
+                        <ExtLink href={watchHref(s.run)}>{ytUrl(s.run) ? "Tonton" : "Preview"}</ExtLink>
+                        <p className="truncate text-xs text-muted-foreground">{s.run.judul}</p>
+                        <PreviewLink href={s.run.status !== "uploaded" ? previewUrl(s.run) : null} />
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card className="gap-3 pb-3">
+        <CardHeader>
+          <CardTitle>Riwayat video</CardTitle>
           <CardAction>
             <RefreshButton
               busy={hist.isFetching || ov.isFetching}
@@ -118,10 +188,10 @@ export function Standup({ active }: { active: boolean }) {
                     {r.picked && <p className="text-xs text-muted-foreground">diposting {fmtShort(r.picked)}</p>}
                   </TableCell>
                   <TableCell className="align-top">
-                    <Thumb src={thumbOf(r)} href={ytUrl(r) ?? previewUrl(r)} className="h-[45px] w-20 sm:h-[63px] sm:w-28" />
+                    <Thumb src={thumbOf(r)} href={watchHref(r)} className="h-[45px] w-20 sm:h-[63px] sm:w-28" />
                   </TableCell>
                   <TableCell className="min-w-44 align-top">
-                    <a href={ytUrl(r) ?? previewUrl(r)} target="_blank" rel="noopener" className="font-medium hover:underline">
+                    <a href={watchHref(r)} target="_blank" rel="noopener" className="font-medium hover:underline">
                       {r.judul}
                     </a>
                     <p className="mt-0.5 text-xs text-muted-foreground">
@@ -131,14 +201,14 @@ export function Standup({ active }: { active: boolean }) {
                     </p>
                     <div className="mt-1.5 flex items-center gap-2 sm:hidden">
                       <VideoBadge status={r.status} />
-                      <ExtLink href={ytUrl(r) ?? previewUrl(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
+                      <ExtLink href={watchHref(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
                     </div>
                     <ErrText>{r.error}</ErrText>
                   </TableCell>
                   <TableCell className="hidden align-top sm:table-cell">
                     <VideoBadge status={r.status} />
                     <div className="mt-1">
-                      <ExtLink href={ytUrl(r) ?? previewUrl(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
+                      <ExtLink href={watchHref(r)}>{ytUrl(r) ? "Tonton" : "Preview"}</ExtLink>
                     </div>
                   </TableCell>
                 </TableRow>
