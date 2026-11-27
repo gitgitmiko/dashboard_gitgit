@@ -1380,7 +1380,7 @@ async function standupHistory(params) {
 
 // Log service yang ditulis journald (unit sistem maupun --user). Unit-unit itu dijalankan oleh user yang sama dengan
 // dashboard, jadi journalctl cukup tanpa sudo; barisnya dipangkas dari prefiks host/pid supaya enak dibaca.
-async function journalLogs(args, lines, match) {
+async function journalLogs(args, lines, keep) {
   let out;
   try {
     ({ stdout: out } = await execFileAsync("journalctl", [...args, "-n", "2000", "--no-pager", "-o", "short-iso"], { timeout: 6000, maxBuffer: 4 << 20 }));
@@ -1391,8 +1391,18 @@ async function journalLogs(args, lines, match) {
     .split("\n")
     .filter(Boolean)
     .map((l) => l.replace(/^\S+ \S+ [\w.-]+\[\d+\]: /, ""))
-    .filter((l) => !match || match.test(l));
+    .filter((l) => !keep || keep(l));
   return { lines: all.slice(-Math.max(20, Math.min(1000, lines || 200))) };
+}
+
+// Baris scraper bertag akun ("[game] ..."); satu akun = barisnya sendiri + baris tanpa tag (restart, peringatan jaringan).
+function sosmedLogFilter(account) {
+  if (!account) return null;
+  if (!/^[\w-]+$/.test(account)) throw httpError(400, "Akun tidak valid");
+  return (l) => {
+    const tag = /: \[([\w-]+)\] /.exec(l)?.[1];
+    return !tag || tag === account;
+  };
 }
 
 const STANDUP_SLOTS = ["10:00", "12:00", "15:00", "18:00", "20:00"];
@@ -1610,7 +1620,7 @@ async function tiktokApi(req, res, url, sub, { redirect, after }) {
     }
     if (sub === "/logs" && req.method === "GET") {
       // Aktivitas TikTok ditulis dashboard ke journal-nya sendiri dengan prefiks "tiktok:".
-      return sendJson(res, 200, { ok: true, ...(await journalLogs(["--user", "-u", "dashboard-gitgit"], Number(url.searchParams.get("lines")), /tiktok:/i)) });
+      return sendJson(res, 200, { ok: true, ...(await journalLogs(["--user", "-u", "dashboard-gitgit"], Number(url.searchParams.get("lines")), (l) => /tiktok:/i.test(l))) });
     }
     const m = /^\/(video|publish|status|schedule|unschedule)\/([a-z0-9-]+)$/.exec(sub);
     if (m && m[1] === "video" && (req.method === "GET" || req.method === "HEAD")) {
@@ -2377,7 +2387,7 @@ const server = createServer(async (req, res) => {
     if (!requireAuth(req, res)) return;
     try {
       const data = path.endsWith("/logs")
-        ? await journalLogs(["-u", "scraper-social-api"], Number(url.searchParams.get("lines")))
+        ? await journalLogs(["-u", "scraper-social-api"], Number(url.searchParams.get("lines")), sosmedLogFilter(url.searchParams.get("account")))
         : await (path.endsWith("/overview") ? focusOverview(url.searchParams) : focusPosts(url.searchParams));
       sendJson(res, 200, { ok: true, ...data });
     } catch (err) {

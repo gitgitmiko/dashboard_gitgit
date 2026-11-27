@@ -180,7 +180,12 @@ function MetaPosts({ platform, account: fixedAccount, title, active }: { platfor
     refetchInterval: poll,
     placeholderData: keepPreviousData,
   });
-  const logs = useQuery({ queryKey: ["sosmed-logs"], queryFn: () => api<{ lines: string[] }>("/api/sosmed/logs?lines=200"), refetchInterval: poll });
+  const logs = useQuery({
+    queryKey: ["sosmed-logs", fixedAccount || ""],
+    queryFn: () => api<{ lines: string[] }>(`/api/sosmed/logs?lines=200${fixedAccount ? `&account=${fixedAccount}` : ""}`),
+    enabled: active,
+    refetchInterval: poll,
+  });
   const d = ov.data;
 
   return (
