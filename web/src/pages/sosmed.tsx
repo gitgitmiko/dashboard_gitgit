@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Camera, Drama, Gamepad2, Clapperboard, Mic, Music2, SquarePlay, Users } from "lucide-react";
 import { DateFilter, ErrText, ExtLink, PostBadge, PreviewLink, publicPreviewUrl, Thumb } from "@/components/automation";
 import { SubTabs, type SubTabDef } from "@/components/subtabs";
+import { IdeasCard } from "@/components/ideas";
 import { ErrorNote, LogView, PageSizeSelect, Pager, RefreshButton, StatCard } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -211,6 +212,7 @@ function MetaPosts({ platform, account: fixedAccount, title, active }: { platfor
 
       {!d && !ov.error && <div className="h-60 animate-pulse rounded-xl border bg-card" />}
       {d && <ScheduleCard title={title} accounts={d.accounts} />}
+      {fixedAccount === "kaiara" && <IdeasCard channel="kaiara" active={active} />}
 
       <Card className="gap-3 pb-3">
         <CardHeader>
