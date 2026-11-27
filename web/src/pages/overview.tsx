@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Bot, Boxes, ChevronRight, Cpu, ExternalLink, Gauge,
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { CleanupButton } from "@/components/cleanup";
+import { ClientPager, usePaged } from "@/components/common";
 import { Sparkline } from "@/components/sparkline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -204,6 +205,7 @@ function scopeVariant(scope: string) {
 function AddressesCard() {
   const [sub, setSub] = useState<(typeof ADDR_TABS)[number]["id"]>("domains");
   const { data, error, isPending } = useQuery({ queryKey: ["addresses"], queryFn: () => api<Addresses>("/api/addresses"), refetchInterval: 60000 });
+  const p = usePaged<unknown>(data ? data[sub] : [], sub);
 
   return (
     <Card>
@@ -239,7 +241,7 @@ function AddressesCard() {
 
         {data && sub === "domains" && (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {data.domains.map((d) => (
+            {(p.rows as Addresses["domains"]).map((d) => (
               <a
                 key={d.hostname + d.path}
                 href={`https://${d.hostname}${d.path}`}
@@ -273,7 +275,7 @@ function AddressesCard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.interfaces.map((r) => (
+              {(p.rows as Addresses["interfaces"]).map((r) => (
                 <TableRow key={r.name + r.address}>
                   <TableCell className="font-mono text-xs">{r.name}</TableCell>
                   <TableCell className="font-mono font-medium">{r.address}</TableCell>
@@ -295,7 +297,7 @@ function AddressesCard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.listeners.map((r) => (
+              {(p.rows as Addresses["listeners"]).map((r) => (
                 <TableRow key={`${r.address}:${r.port}`}>
                   <TableCell className="font-mono text-xs whitespace-nowrap">
                     {r.address.includes(":") ? `[${r.address}]` : r.address}:<span className="font-semibold text-foreground">{r.port}</span>
@@ -321,7 +323,7 @@ function AddressesCard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.docker.map((r) => (
+              {(p.rows as Addresses["docker"]).map((r) => (
                 <TableRow key={r.name}>
                   <TableCell className="font-medium">{r.name}</TableCell>
                   <TableCell className="font-mono text-xs">{r.ip}</TableCell>
@@ -344,7 +346,7 @@ function AddressesCard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.lan.map((r) => (
+              {(p.rows as Addresses["lan"]).map((r) => (
                 <TableRow key={r.ip}>
                   <TableCell className="font-mono font-medium">{r.ip}</TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">{r.mac}</TableCell>
@@ -359,6 +361,7 @@ function AddressesCard() {
           </Table>
         )}
       </CardContent>
+      <ClientPager p={p} unit="baris" />
     </Card>
   );
 }

@@ -13,7 +13,7 @@ import pg from "pg";
 const execFileAsync = promisify(execFile);
 const HOME = homedir();
 const env = process.env;
-const ROW_PAGE_SIZES = [25, 50, 100];
+const ROW_PAGE_SIZES = [10, 25, 50, 100];
 const CELL_MAX = 2000;
 // Di bawah batas ini jumlah baris dihitung persis (COUNT(*)); di atasnya pakai perkiraan statistik.
 const EXACT_COUNT_MAX = 200_000;
@@ -77,7 +77,7 @@ function cell(v) {
 }
 
 function pageArgs(rawPage, rawSize) {
-  const pageSize = ROW_PAGE_SIZES.includes(Number(rawSize)) ? Number(rawSize) : 25;
+  const pageSize = ROW_PAGE_SIZES.includes(Number(rawSize)) ? Number(rawSize) : 10;
   const page = Math.max(1, Math.floor(Number(rawPage)) || 1);
   return { page, pageSize, offset: (page - 1) * pageSize };
 }

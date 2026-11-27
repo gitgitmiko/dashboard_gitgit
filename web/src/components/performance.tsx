@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { ClientPager, usePaged } from "@/components/common";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -29,10 +29,9 @@ const pctTone = (p: number | null) => (p == null ? "" : p >= 70 ? "text-success"
 
 export function PerformanceCard({ active }: { active: boolean }) {
   const [sort, setSort] = useState("views");
-  const [all, setAll] = useState(false);
   const q = useQuery({ queryKey: ["wi-performance"], queryFn: () => api<Perf>("/api/analytics/whatif"), enabled: active, refetchInterval: active ? 300000 : false });
   const vids = [...(q.data?.videos ?? [])].sort(SORT[sort][1]);
-  const shown = all ? vids : vids.slice(0, 10);
+  const p = usePaged(vids, sort);
   const total = vids.reduce((n, v) => n + v.views, 0);
   const withPct = vids.filter((v) => v.pct != null);
   const avgPct = withPct.length ? withPct.reduce((n, v) => n + (v.pct ?? 0) * v.views, 0) / Math.max(1, withPct.reduce((n, v) => n + v.views, 0)) : null;
@@ -89,7 +88,7 @@ export function PerformanceCard({ active }: { active: boolean }) {
           <TableBody>
             {!q.data && <TableEmpty cols={5}>{q.error?.message || "Memuat…"}</TableEmpty>}
             {q.data && !vids.length && <TableEmpty cols={5}>Belum ada data analytics.</TableEmpty>}
-            {shown.map((v) => (
+            {p.rows.map((v) => (
               <TableRow key={v.id}>
                 <TableCell className="max-w-80 min-w-44 align-top">
                   <a href={`https://www.youtube.com/shorts/${v.id}`} target="_blank" rel="noopener" className="line-clamp-2 font-medium hover:underline">
@@ -116,13 +115,7 @@ export function PerformanceCard({ active }: { active: boolean }) {
           </TableBody>
         </Table>
       </CardContent>
-      {vids.length > 10 && (
-        <div className="flex justify-center border-t pt-3">
-          <Button variant="ghost" size="sm" onClick={() => setAll(!all)}>
-            {all ? "Tampilkan 10 teratas" : `Tampilkan semua (${vids.length})`}
-          </Button>
-        </div>
-      )}
+      <ClientPager p={p} unit="video" />
     </Card>
   );
 }

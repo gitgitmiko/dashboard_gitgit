@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -41,12 +41,29 @@ export function PageSizeSelect({ value, onChange }: { value: number; onChange: (
   );
 }
 
-export function Pager({ page, totalPages, onPage, info }: { page: number; totalPages: number; onPage: (p: number) => void; info?: ReactNode }) {
+export function Pager({
+  page,
+  totalPages,
+  onPage,
+  info,
+  size,
+  onSize,
+}: {
+  page: number;
+  totalPages: number;
+  onPage: (p: number) => void;
+  info?: ReactNode;
+  size?: number;
+  onSize?: (n: number) => void;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 border-t px-4 pt-3 text-xs text-muted-foreground sm:px-5">
-      <span className="tabular">
-        Hal {page} / {totalPages}
-        {info}
+      <span className="tabular flex flex-wrap items-center gap-x-3 gap-y-1">
+        {size != null && onSize && <PageSizeSelect value={size} onChange={onSize} />}
+        <span>
+          Hal {page} / {totalPages}
+          {info}
+        </span>
       </span>
       <div className="flex gap-1">
         <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
@@ -58,6 +75,38 @@ export function Pager({ page, totalPages, onPage, info }: { page: number; totalP
       </div>
     </div>
   );
+}
+
+/** Paginasi di browser untuk daftar yang sudah lengkap di klien; 10 baris per halaman. Ganti resetKey (filter/urutan)
+ *  untuk kembali ke halaman 1. */
+export function usePaged<T>(items: T[], resetKey?: unknown) {
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(PAGE_SIZES[0]);
+  const [key, setKey] = useState(resetKey);
+  if (key !== resetKey) {
+    setKey(resetKey);
+    setPage(1);
+  }
+  const totalPages = Math.max(1, Math.ceil(items.length / size));
+  const cur = Math.min(page, totalPages);
+  return {
+    rows: items.slice((cur - 1) * size, cur * size),
+    page: cur,
+    totalPages,
+    total: items.length,
+    size,
+    setPage,
+    setSize: (n: number) => {
+      setSize(n);
+      setPage(1);
+    },
+  };
+}
+
+/** Pager + pilihan jumlah baris untuk usePaged; tidak tampil kalau semua muat dalam 10 baris. */
+export function ClientPager({ p, unit }: { p: ReturnType<typeof usePaged>; unit: string }) {
+  if (p.total <= PAGE_SIZES[0]) return null;
+  return <Pager page={p.page} totalPages={p.totalPages} onPage={p.setPage} info={` · ${p.total} ${unit}`} size={p.size} onSize={p.setSize} />;
 }
 
 export function RefreshButton({ onClick, busy, label = "Muat ulang" }: { onClick: () => void; busy?: boolean; label?: string }) {

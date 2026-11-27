@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrText } from "@/components/automation";
-import { ErrorNote, RefreshButton, StatCard } from "@/components/common";
+import { ClientPager, ErrorNote, RefreshButton, StatCard, usePaged } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -169,6 +169,16 @@ export function Cron({ active }: { active: boolean }) {
   const periodic = auto?.periodic ?? [];
   const errors = Object.entries(qs).filter(([, q]) => q.error).map(([k, q]) => `${k}: ${q.error!.message}`);
   const nowIdx = shown.findIndex((r) => toMin(r.at) > now);
+  const p = usePaged(shown, show);
+  const offset = (p.page - 1) * p.size;
+  // Sekali, setelah semua sumber termuat: buka halaman yang memuat jam sekarang, bukan selalu dari 00:00.
+  const loaded = Object.values(qs).every((q) => !q.isPending);
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (jumped.current || !loaded || !auto || nowIdx < 0) return;
+    jumped.current = true;
+    p.setPage(Math.floor(nowIdx / p.size) + 1);
+  }, [loaded, auto, nowIdx, p]);
   const nowLabel = `${String(Math.floor(now / 60)).padStart(2, "0")}:${String(now % 60).padStart(2, "0")}`;
 
   return (
@@ -221,9 +231,9 @@ export function Cron({ active }: { active: boolean }) {
             <TableBody>
               {!auto && <TableEmpty cols={4}>Memuat…</TableEmpty>}
               {auto && !shown.length && <TableEmpty cols={4}>{show === "bad" ? "Tidak ada yang bermasalah hari ini." : "Tidak ada kegiatan."}</TableEmpty>}
-              {shown.map((r, i) => (
+              {p.rows.map((r, i) => (
                 <Fragment key={`${r.at}-${r.channel}-${r.kind}-${i}`}>
-                  {i === nowIdx && (
+                  {offset + i === nowIdx && (
                     <TableRow className="hover:bg-transparent">
                       <TableCell colSpan={4} className="py-1 text-xs font-medium text-primary">
                         ── Sekarang {nowLabel} ──
@@ -249,6 +259,7 @@ export function Cron({ active }: { active: boolean }) {
             </TableBody>
           </Table>
         </CardContent>
+        <ClientPager p={p} unit="kegiatan" />
       </Card>
 
       <RolesCard active={active} />

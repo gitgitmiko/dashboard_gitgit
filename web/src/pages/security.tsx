@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, ShieldOff } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ErrorNote, Pager, RefreshButton, StatCard } from "@/components/common";
+import { ClientPager, ErrorNote, RefreshButton, StatCard, usePaged } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +32,6 @@ const KIND: Record<Kind, { label: string; variant: "warning" | "destructive" | "
   ban: { label: "Diblokir", variant: "destructive" },
   unban: { label: "Dibuka", variant: "success" },
 };
-const PAGE = 25;
 
 function flag(code: string) {
   return /^[A-Z]{2}$/.test(code) ? String.fromCodePoint(...[...code].map((c) => 0x1f1a5 + c.charCodeAt(0))) : "";
@@ -64,7 +63,6 @@ export function Security({ active }: { active: boolean }) {
   const [days, setDays] = useState(7);
   const [jail, setJail] = useState("");
   const [kind, setKind] = useState<"" | Kind>("");
-  const [page, setPage] = useState(1);
   const [busyIp, setBusyIp] = useState("");
 
   const { data: d, error, isLoading, isFetching, refetch } = useQuery({
@@ -76,8 +74,10 @@ export function Security({ active }: { active: boolean }) {
 
   const label = useMemo(() => Object.fromEntries((d?.jails || []).map((j) => [j.id, j.label])), [d]);
   const events = useMemo(() => (d?.events || []).filter((e) => (!jail || e.jail === jail) && (!kind || e.kind === kind)), [d, jail, kind]);
-  const totalPages = Math.max(1, Math.ceil(events.length / PAGE));
-  const shown = events.slice((Math.min(page, totalPages) - 1) * PAGE, Math.min(page, totalPages) * PAGE);
+  const ev = usePaged(events, `${days}|${jail}|${kind}`);
+  const banPage = usePaged(d?.bans ?? []);
+  const topPage = usePaged(d?.top ?? []);
+  const dayPage = usePaged([...(d?.daily || [])].reverse(), days);
 
   const fails = d?.daily.reduce((n, x) => n + x.fail, 0) ?? 0;
   const bans = d?.daily.reduce((n, x) => n + x.ban, 0) ?? 0;
@@ -119,7 +119,6 @@ export function Security({ active }: { active: boolean }) {
               value={days}
               onChange={(e) => {
                 setDays(Number(e.target.value));
-                setPage(1);
               }}
               className="w-32"
             >
@@ -160,7 +159,7 @@ export function Security({ active }: { active: boolean }) {
           <TableBody>
             {isLoading && <TableEmpty cols={6}>Memuat…</TableEmpty>}
             {d && !d.bans.length && <TableEmpty cols={6}>Tidak ada IP yang sedang diblokir.</TableEmpty>}
-            {d?.bans.map((b) => (
+            {banPage.rows.map((b) => (
               <TableRow key={`${b.jail}-${b.ip}`}>
                 <TableCell className="font-mono text-xs">
                   {b.ip}
@@ -186,6 +185,7 @@ export function Security({ active }: { active: boolean }) {
             ))}
           </TableBody>
         </Table>
+        <ClientPager p={banPage} unit="IP" />
       </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -231,7 +231,7 @@ export function Security({ active }: { active: boolean }) {
             </TableHeader>
             <TableBody>
               {d && !d.top.length && <TableEmpty cols={3}>Belum ada percobaan login gagal.</TableEmpty>}
-              {d?.top.map((t) => (
+              {topPage.rows.map((t) => (
                 <TableRow key={t.ip}>
                   <TableCell className="font-mono text-xs">{t.ip}</TableCell>
                   <TableCell>
@@ -242,6 +242,7 @@ export function Security({ active }: { active: boolean }) {
               ))}
             </TableBody>
           </Table>
+        <ClientPager p={topPage} unit="IP" />
         </Card>
       </div>
 
@@ -259,7 +260,7 @@ export function Security({ active }: { active: boolean }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {[...(d?.daily || [])].reverse().map((x) => (
+            {dayPage.rows.map((x) => (
               <TableRow key={x.date}>
                 <TableCell>{new Date(`${x.date}T00:00:00`).toLocaleDateString("id-ID", { weekday: "short", day: "2-digit", month: "short" })}</TableCell>
                 <TableCell className="tabular text-right">{x.fail}</TableCell>
@@ -268,6 +269,7 @@ export function Security({ active }: { active: boolean }) {
             ))}
           </TableBody>
         </Table>
+        <ClientPager p={dayPage} unit="hari" />
       </Card>
 
       <Card className="gap-3 pb-3">
@@ -279,7 +281,6 @@ export function Security({ active }: { active: boolean }) {
               value={jail}
               onChange={(e) => {
                 setJail(e.target.value);
-                setPage(1);
               }}
               className="w-40"
             >
@@ -294,7 +295,6 @@ export function Security({ active }: { active: boolean }) {
               value={kind}
               onChange={(e) => {
                 setKind(e.target.value as "" | Kind);
-                setPage(1);
               }}
               className="w-36"
             >
@@ -318,7 +318,7 @@ export function Security({ active }: { active: boolean }) {
           <TableBody>
             {isLoading && <TableEmpty cols={5}>Memuat…</TableEmpty>}
             {d && !events.length && <TableEmpty cols={5}>Tidak ada kejadian pada periode ini.</TableEmpty>}
-            {shown.map((e, i) => (
+            {ev.rows.map((e, i) => (
               <TableRow key={`${e.time}-${e.ip}-${e.kind}-${i}`}>
                 <TableCell className="whitespace-nowrap">{fmtShort(e.time)}</TableCell>
                 <TableCell>
@@ -336,7 +336,7 @@ export function Security({ active }: { active: boolean }) {
             ))}
           </TableBody>
         </Table>
-        {events.length > PAGE && <Pager page={Math.min(page, totalPages)} totalPages={totalPages} onPage={setPage} info={` · ${events.length} kejadian`} />}
+        <ClientPager p={ev} unit="kejadian" />
       </Card>
     </div>
   );

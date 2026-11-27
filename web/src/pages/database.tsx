@@ -2,7 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Copy, Database as DbIcon, KeyRound, ListTree, Search, Activity } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ErrorNote, Pager, RefreshButton } from "@/components/common";
+import { ClientPager, ErrorNote, PAGE_SIZES, Pager, RefreshButton, usePaged } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,7 +51,6 @@ type Rows = {
 };
 
 const KIND_LABEL: Record<Kind, string> = { mysql: "MySQL", postgres: "PostgreSQL", sqlite: "SQLite" };
-const ROW_SIZES = [25, 50, 100];
 
 function shortUptime(sec: number | null | undefined) {
   if (sec == null) return "";
@@ -155,7 +154,7 @@ function CellDialog({ value, onClose }: { value: { col: string; cell: Cell } | n
 
 function TableBrowser({ source, db, table, onClose }: { source: Source; db: string; table: string | null; onClose: () => void }) {
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [sort, setSort] = useState<{ col: string; dir: "asc" | "desc" } | null>(null);
   const [cell, setCell] = useState<{ col: string; cell: Cell } | null>(null);
 
@@ -194,7 +193,7 @@ function TableBrowser({ source, db, table, onClose }: { source: Source; db: stri
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             Baris
             <NativeSelect value={pageSize} onChange={(e) => (setPageSize(Number(e.target.value)), setPage(1))} className="w-20">
-              {ROW_SIZES.map((n) => (
+              {PAGE_SIZES.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
@@ -295,6 +294,7 @@ function TablesPanel({ source }: { source: Source }) {
     return (tables.data?.tables || []).filter((t) => !q || t.name.toLowerCase().includes(q));
   }, [tables.data, filter]);
   const totalSize = (tables.data?.tables || []).reduce((n, t) => n + (t.size || 0), 0);
+  const tp = usePaged(rows, `${db}|${filter}`);
 
   return (
     <div className="flex flex-col gap-3">
@@ -327,7 +327,7 @@ function TablesPanel({ source }: { source: Source }) {
         <TableBody>
           {(tables.isLoading || (!db && dbs.isLoading)) && <TableEmpty cols={4}>Memuat…</TableEmpty>}
           {tables.data && !rows.length && <TableEmpty cols={4}>Tidak ada tabel.</TableEmpty>}
-          {rows.map((t) => (
+          {tp.rows.map((t) => (
             <TableRow key={t.name} className="cursor-pointer" onClick={() => setOpen(t.name)}>
               <TableCell className="max-w-[14rem] truncate font-mono text-xs sm:max-w-none">
                 {t.name}
@@ -347,6 +347,7 @@ function TablesPanel({ source }: { source: Source }) {
           ))}
         </TableBody>
       </Table>
+      <ClientPager p={tp} unit="tabel" />
       {tables.data && (
         <p className="text-xs text-muted-foreground">
           {tables.data.tables.length} tabel · {fmtBytes(totalSize)}
