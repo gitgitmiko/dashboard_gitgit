@@ -91,7 +91,7 @@ function ScheduleCard({ title, accounts }: { title: string; accounts: Account[] 
           <CardDescription className="mt-1.5">
             {accounts.map((a) => `${a.brand_name} (${a.handle || a.key}) · kategori ${a.category}`).join(" · ")} ·{" "}
             {duo
-              ? "produksi video 01:17 & 13:17 WIB ke outbox nostalgia-reels, diunggah n8n saat slot"
+              ? "produksi video 5x sehari (23:30, 01:30, 03:30, 05:30, 07:30 WIB) ke outbox nostalgia-reels, diunggah n8n saat slot"
               : "konten dibuat scraper saat slot, diunggah n8n"}
           </CardDescription>
         </div>
