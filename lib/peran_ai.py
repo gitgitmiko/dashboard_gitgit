@@ -21,6 +21,9 @@ CHANNELS = ("standup", "kaiara", "whatif")
 DEFAULTS = {"riset": "claude:sonnet", "penulis": "claude:sonnet", "juri": "claude:opus", "cek": "claude:opus"}
 CHOICES = ("claude:sonnet", "claude:opus", "mimo:pro", "mimo:flash", "hermes")
 MIMO_MODELS = {"pro": "mimo-v2.6-pro", "flash": "mimo-v2.6-flash"}
+# Cadangan terakhir bila Claude gangguan: perusahaan lain (Xiaomi), lalu model gratis lewat 9router (Google dll).
+FALLBACK = ("claude:sonnet", "mimo:pro", "router")
+ROUTER_MODELS = ("gemini/gemini-3.6-flash", "gemini/gemini-3.8-flash", "model-free")
 DASHBOARD_ENV = Path(__file__).resolve().parent.parent / ".env"  # MIMO_API_KEY / MIMO_BASE_URL dashboard
 CLAUDE = Path.home() / ".local" / "bin" / "claude"
 HERMES = Path.home() / ".local" / "bin" / "hermes"
@@ -88,6 +91,25 @@ def _mimo(model, system, user, timeout):
     return res["choices"][0]["message"]["content"]
 
 
+def _router(system, user, timeout):
+    """Model gratis lewat 9router lokal (tanpa web search); coba tiap model sampai ada yang menjawab."""
+    base = (_env("LLM_BASE_URL") or "http://127.0.0.1:20128/v1").rstrip("/")
+    err = None
+    for name in ROUTER_MODELS:
+        body = json.dumps({"model": name, "stream": False, "temperature": 0.7,
+                           "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}).encode()
+        req = urllib.request.Request(f"{base}/chat/completions", data=body,
+                                     headers={"Authorization": f"Bearer {_env('LLM_API_KEY')}", "Content-Type": "application/json"})
+        try:
+            text = json.loads(urllib.request.urlopen(req, timeout=min(timeout, 300)).read())["choices"][0]["message"]["content"]
+            if text and text.strip():
+                return text
+            err = "jawaban kosong"
+        except Exception as e:  # noqa: BLE001 - model gratis sering penuh: coba berikutnya
+            err = e
+    raise RuntimeError(f"9router: semua model gagal ({str(err)[:200]})")
+
+
 def _hermes(system, user, timeout):
     """Agen Hermes sekali jalan (tool-nya sendiri, termasuk web), memakai model yang dipilih di config Hermes."""
     r = subprocess.run([str(HERMES), "-z", f"{system}\n\n---\n\n{user}"], capture_output=True, text=True, cwd=SCRATCH, timeout=timeout)
@@ -103,6 +125,8 @@ def call(choice, system, user, web=False, timeout=900):
         return _claude(model, system, user, web, timeout)
     if kind == "mimo":
         return _mimo(model, system, user, timeout)
+    if kind == "router":
+        return _router(system, user, timeout)
     if kind == "hermes":
         SCRATCH.mkdir(parents=True, exist_ok=True)
         return _hermes(system, user, timeout)
@@ -117,9 +141,9 @@ def parse_json(text):
 
 
 def ask_json(channel, role, system, user, web=False, timeout=900):
-    """(jawaban JSON, pilihan AI yang menjawab): pilihan dashboard, lalu bawaan peran itu, lalu Claude Sonnet."""
+    """(jawaban JSON, pilihan AI yang menjawab): pilihan dashboard, bawaan peran itu, lalu FALLBACK lintas penyedia."""
     chosen = settings().get(channel, DEFAULTS).get(role, DEFAULTS[role])
-    order = list(dict.fromkeys([chosen, DEFAULTS[role], "claude:sonnet"]))  # Sonnet terakhir: Opus pun bisa kena limit
+    order = list(dict.fromkeys([chosen, DEFAULTS[role], *FALLBACK]))
     err = None
     for choice in order:
         try:
@@ -159,6 +183,16 @@ if __name__ == "__main__":  # self-check tanpa memanggil AI sungguhan
 
     call = opus_limit
     assert ask_json("standup", "juri", "s", "u")[1] == "claude:sonnet" and seen == ["mimo:pro", "claude:opus", "claude:sonnet"]
+    seen.clear()
+
+    def claude_down(choice, system, user, web=False, timeout=0):
+        seen.append(choice)
+        if choice.startswith("claude") or choice == "mimo:pro":
+            raise RuntimeError("down")
+        return '{"ok": 1}'
+
+    call = claude_down
+    assert ask_json("kaiara", "penulis", "s", "u") == ({"ok": 1}, "router") and seen == ["claude:sonnet", "mimo:pro", "router"]
     call = fake
     seen.clear()
     data, who = ask_json("kaiara", "juri", "s", "u")
