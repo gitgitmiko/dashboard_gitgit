@@ -2234,6 +2234,9 @@ const server = createServer(async (req, res) => {
       ["standup", join(HOME, "github-repos", "gitgit_standup", "data", "antrean"), (d) => d.tema?.startsWith("viral:"), (d) => [d.judul, d.tema, ""]], // "punchline" stand-up = salam penutup
       ["kaiara", join(HOME, "github-repos", "nostalgia-reels", "data", "antrean"), (d) => !!d.viral,
         (d) => [d.script?.judul, d.theme, d.script?.dialog?.at(-1)?.t]],
+      // What If: data/bank/<tanggal>.json dari shorts/ideas.py (lolos juri + cek fakta, pipeline/bank.py)
+      ["whatif", join(HOME, "github-repos", "whatif-automation", "data", "bank"), () => false,
+        (d) => [d.script?.yt_title || d.script?.title, d.idea?.topic, d.script?.scenes?.[0]?.text]],
     ];
     const out = {};
     for (const [ch, dir, viralOf, textOf] of SOURCES) {
@@ -2251,7 +2254,7 @@ const server = createServer(async (req, res) => {
         } catch {
           continue;
         }
-        (a.draf || []).forEach((d, i) => {
+        (a.draf || a.naskah || []).forEach((d, i) => {
           const [judul, tema, punchline] = textOf(d);
           const viral = viralOf(d);
           const status = d.dipakai != null ? "dipakai" : viral ? "viral" : (d.nilai ?? 0) < MIN ? "rendah" : "siap";

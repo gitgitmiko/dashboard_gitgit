@@ -219,7 +219,8 @@ function BankCard({ active }: { active: boolean }) {
           <CardTitle>Bank naskah</CardTitle>
           <CardDescription className="mt-1.5">
             Naskah riset malam yang sudah dijuri. Yang berstatus siap darurat (belum dipakai, nilai juri ≥ {q.data?.min ?? 5}, bukan topik viral) otomatis
-            diproduksi kalau semua AI gagal menulis, tanpa AI sama sekali. Sumber: berkas data/antrean tiap channel.
+            diproduksi kalau semua AI gagal menulis, tanpa AI sama sekali; di GIMANA JADINYA? bank juga dipakai untuk video stok cadangan (naskahnya sudah
+            lolos cek fakta). Sumber: berkas data/antrean (data/bank untuk GIMANA JADINYA?) tiap channel.
           </CardDescription>
         </div>
         <CardAction>
@@ -229,7 +230,7 @@ function BankCard({ active }: { active: boolean }) {
       <CardContent className="flex flex-col gap-3">
         {q.error && <ErrorNote>{q.error.message}</ErrorNote>}
         <div className="flex flex-wrap items-center gap-2">
-          {[["standup", "Gitgit Stand-up"], ["kaiara", "Kai & Kak Ara"]].map(([k, label]) => (
+          {[["standup", "Gitgit Stand-up"], ["kaiara", "Kai & Kak Ara"], ["whatif", "GIMANA JADINYA?"]].map(([k, label]) => (
             <button key={k} onClick={() => setCh(k)}
               className={`rounded-full border px-3 py-1 text-xs ${ch === k ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
               {label} · {ready(k)} siap
@@ -256,6 +257,7 @@ function BankCard({ active }: { active: boolean }) {
               </div>
               <p className="text-sm font-medium">{r.judul || r.tema}</p>
               {r.punchline && <p className="text-xs text-muted-foreground">“{r.punchline}”</p>}
+              {ch === "whatif" && r.tema && <p className="text-xs text-muted-foreground">Topik: kamu jadi {r.tema}</p>}
               {r.alasan && <p className="text-xs text-muted-foreground">Juri: {r.alasan}</p>}
             </li>
           ))}
