@@ -195,6 +195,77 @@ function FallbackCard({ active }: { active: boolean }) {
   );
 }
 
+type BankRow = { tanggal: string; idx: number; judul: string; tema: string; punchline: string; nilai: number | null; alasan: string; dipakai: string | null; status: "siap" | "dipakai" | "viral" | "rendah"; juri: string };
+const BANK_STATUS: Record<BankRow["status"], [string, "success" | "secondary" | "outline" | "warning"]> = {
+  siap: ["Siap darurat", "success"],
+  dipakai: ["Sudah dipakai", "secondary"],
+  viral: ["Viral, basi", "outline"],
+  rendah: ["Nilai rendah", "outline"],
+};
+
+/** Naskah yang sudah dijuri dari riset malam: yang "siap darurat" dipakai bila semua AI gagal menulis. */
+function BankCard({ active }: { active: boolean }) {
+  const q = useQuery({ queryKey: ["bank-naskah"], queryFn: () => api<{ min: number; channels: Record<string, BankRow[]> }>("/api/bank-naskah"), enabled: active });
+  const [ch, setCh] = useState("standup");
+  const [onlyReady, setOnlyReady] = useState(true);
+  const all = q.data?.channels[ch] ?? [];
+  const rows = onlyReady ? all.filter((r) => r.status === "siap") : all;
+  const p = usePaged(rows, `${ch}-${onlyReady}`);
+  const ready = (c: string) => (q.data?.channels[c] ?? []).filter((r) => r.status === "siap").length;
+  return (
+    <Card className="gap-3">
+      <CardHeader>
+        <div>
+          <CardTitle>Bank naskah</CardTitle>
+          <CardDescription className="mt-1.5">
+            Naskah riset malam yang sudah dijuri. Yang berstatus siap darurat (belum dipakai, nilai juri ≥ {q.data?.min ?? 5}, bukan topik viral) otomatis
+            diproduksi kalau semua AI gagal menulis, tanpa AI sama sekali. Sumber: berkas data/antrean tiap channel.
+          </CardDescription>
+        </div>
+        <CardAction>
+          <RefreshButton onClick={() => q.refetch()} busy={q.isFetching} />
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {q.error && <ErrorNote>{q.error.message}</ErrorNote>}
+        <div className="flex flex-wrap items-center gap-2">
+          {[["standup", "Gitgit Stand-up"], ["kaiara", "Kai & Kak Ara"]].map(([k, label]) => (
+            <button key={k} onClick={() => setCh(k)}
+              className={`rounded-full border px-3 py-1 text-xs ${ch === k ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
+              {label} · {ready(k)} siap
+            </button>
+          ))}
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" checked={onlyReady} onChange={(e) => setOnlyReady(e.target.checked)} />
+            Hanya yang siap
+          </label>
+        </div>
+        {!rows.length && (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            {q.isLoading ? "Memuat…" : onlyReady ? "Tidak ada naskah siap darurat. Stok video tetap jadi cadangan utama." : "Belum ada naskah."}
+          </p>
+        )}
+        <ul className="flex flex-col divide-y">
+          {p.rows.map((r) => (
+            <li key={`${r.tanggal}-${r.idx}`} className="flex flex-col gap-1 py-2.5">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant={BANK_STATUS[r.status][1]}>{BANK_STATUS[r.status][0]}</Badge>
+                <span>nilai {r.nilai ?? "—"}</span>
+                <span className="tabular">riset {r.tanggal}</span>
+                {r.dipakai && <span>· {r.dipakai}</span>}
+              </div>
+              <p className="text-sm font-medium">{r.judul || r.tema}</p>
+              {r.punchline && <p className="text-xs text-muted-foreground">“{r.punchline}”</p>}
+              {r.alasan && <p className="text-xs text-muted-foreground">Juri: {r.alasan}</p>}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+      <ClientPager p={p} unit="naskah" />
+    </Card>
+  );
+}
+
 export function Cron({ active }: { active: boolean }) {
   const [show, setShow] = useState<"all" | "bad" | "waiting">("all");
   const poll = active ? 30000 : false;
@@ -319,6 +390,8 @@ export function Cron({ active }: { active: boolean }) {
       <RolesCard active={active} />
 
       <FallbackCard active={active} />
+
+      <BankCard active={active} />
 
       <Card className="gap-3">
         <CardHeader>

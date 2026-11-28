@@ -2225,6 +2225,46 @@ const server = createServer(async (req, res) => {
       { redirect: undefined, after: (note) => `/?tiktok=${note}#sosmed` });
   }
 
+  // Bank naskah: naskah riset malam yang sudah dijuri, dibaca langsung dari data/antrean/*.json tiap channel (sumber
+  // yang sama dengan research.bank_draft(); indeks MySQL hanya salinan). Aturan "siap darurat" = BANK_MIN_NILAI di sana.
+  if (path === `${base}/api/bank-naskah` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    const MIN = 5;
+    const SOURCES = [
+      ["standup", join(HOME, "github-repos", "gitgit_standup", "data", "antrean"), (d) => d.tema?.startsWith("viral:"), (d) => [d.judul, d.tema, ""]], // "punchline" stand-up = salam penutup
+      ["kaiara", join(HOME, "github-repos", "nostalgia-reels", "data", "antrean"), (d) => !!d.viral,
+        (d) => [d.script?.judul, d.theme, d.script?.dialog?.at(-1)?.t]],
+    ];
+    const out = {};
+    for (const [ch, dir, viralOf, textOf] of SOURCES) {
+      const rows = [];
+      let files = [];
+      try {
+        files = (await readdir(dir)).filter((f) => f.endsWith(".json")).sort().reverse();
+      } catch {
+        /* belum ada antrean */
+      }
+      for (const f of files) {
+        let a;
+        try {
+          a = JSON.parse(await readFile(join(dir, f), "utf8"));
+        } catch {
+          continue;
+        }
+        (a.draf || []).forEach((d, i) => {
+          const [judul, tema, punchline] = textOf(d);
+          const viral = viralOf(d);
+          const status = d.dipakai != null ? "dipakai" : viral ? "viral" : (d.nilai ?? 0) < MIN ? "rendah" : "siap";
+          rows.push({ tanggal: f.slice(0, -5), idx: i, judul: judul || "", tema: tema || "", punchline: punchline || "", nilai: d.nilai ?? null,
+            alasan: d.alasan || "", dipakai: d.dipakai ?? null, status, juri: a.juri || "" });
+        });
+      }
+      out[ch] = rows;
+    }
+    sendJson(res, 200, { ok: true, min: MIN, channels: out });
+    return;
+  }
+
   // Riwayat cadangan produksi konten (lib/cadangan.py): AI pengganti, bank naskah, suara Piper, stok terpakai.
   if (path === `${base}/api/cadangan` && req.method === "GET") {
     if (!requireAuth(req, res)) return;
