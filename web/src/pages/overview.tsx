@@ -417,6 +417,35 @@ function RestartButton() {
   );
 }
 
+function SwapButton() {
+  const ask = useAsk();
+  const [busy, setBusy] = useState(false);
+
+  async function clear() {
+    const yes = await ask({
+      title: "Kosongkan swap?",
+      description:
+        "Isi swap dipindah kembali ke RAM (swapoff lalu swapon). Hanya jalan bila RAM tersedia cukup + cadangan 1 GB; bisa makan waktu 1–2 menit dan server sedikit sibuk selama itu.",
+      confirmLabel: "Kosongkan",
+    });
+    if (!yes) return;
+    setBusy(true);
+    try {
+      const d = await api<{ message: string }>("/api/swap/clear", { method: "POST" });
+      toast.success(d.message);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Button variant="outline" size="sm" disabled={busy} onClick={clear}>
+      <HardDrive className={cn(busy && "animate-pulse")} /> {busy ? "Mengosongkan…" : "Kosongkan swap"}
+    </Button>
+  );
+}
+
 export function Overview() {
   const { data: s, error } = useStats();
   const free = useQuery({ queryKey: ["free-usage"], queryFn: () => api<FreeUsage>("/api/free-usage"), refetchInterval: 30000 });
@@ -442,9 +471,10 @@ export function Overview() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">{s ? `${s.hostname} · hidup ${fmtDuration(s.uptime_sec)}` : "Memuat…"}</p>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <RestartButton />
           <CleanupButton />
+          <SwapButton />
         </div>
       </div>
       {error && <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error.message}</p>}

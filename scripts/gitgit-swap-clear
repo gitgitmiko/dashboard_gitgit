@@ -1,0 +1,18 @@
+#!/bin/bash
+# Kosongkan swap (swapoff -a lalu swapon -a), hanya bila RAM tersedia cukup menampung isinya.
+# Dipasang sebagai root di /usr/local/sbin dan dipanggil dashboard lewat `sudo -n`.
+set -u
+exec 9>/run/gitgit-swap-clear.lock
+flock -n 9 || { echo "Pengosongan swap lain sedang berjalan" >&2; exit 3; }
+kb() { awk -v k="$1:" '$1==k{print $2}' /proc/meminfo; }
+used=$(( $(kb SwapTotal) - $(kb SwapFree) ))
+avail=$(kb MemAvailable)
+margin=$((1024 * 1024)) # sisakan minimal 1 GB RAM setelah isi swap pindah
+if [ "$used" -le 0 ]; then echo "Swap sudah kosong"; exit 0; fi
+if [ $((avail - used)) -lt "$margin" ]; then
+  echo "RAM tersedia $((avail / 1024)) MB tidak cukup menampung swap $((used / 1024)) MB + 1 GB cadangan" >&2
+  exit 2
+fi
+if ! swapoff -a; then swapon -a; echo "swapoff gagal, swap diaktifkan lagi" >&2; exit 1; fi
+swapon -a
+echo "Swap dikosongkan: $((used / 1024)) MB dipindah ke RAM"

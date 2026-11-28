@@ -2376,6 +2376,18 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Kosongkan swap lewat helper root (scripts/gitgit-swap-clear) yang diizinkan sudo tanpa password.
+  if (path === `${base}/api/swap/clear` && req.method === "POST") {
+    if (!requireAuth(req, res)) return;
+    try {
+      const { stdout } = await execFileAsync("sudo", ["-n", "/usr/local/sbin/gitgit-swap-clear"], { timeout: 600000 });
+      sendJson(res, 200, { ok: true, message: stdout.trim() });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, message: err.stderr?.trim() || err.message });
+    }
+    return;
+  }
+
   // Restart service dashboard: unit yang sama dengan proses ini, jadi balasan harus keluar lebih dulu.
   if (path === `${base}/api/service/restart` && req.method === "POST") {
     if (!requireAuth(req, res)) return;
