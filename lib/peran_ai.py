@@ -11,10 +11,14 @@ JSON) digantikan bawaan peran itu, dan nama AI yang benar-benar menjawab ikut di
 import json
 import os
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cadangan import catat  # noqa: E402
 
 CONFIG = Path(os.getenv("PERAN_AI_FILE", Path.home() / ".config" / "gitgit-studio" / "peran-ai.json"))
 CHANNELS = ("standup", "kaiara", "whatif")
@@ -144,18 +148,25 @@ def ask_json(channel, role, system, user, web=False, timeout=900):
     """(jawaban JSON, pilihan AI yang menjawab): pilihan dashboard, bawaan peran itu, lalu FALLBACK lintas penyedia."""
     chosen = settings().get(channel, DEFAULTS).get(role, DEFAULTS[role])
     order = list(dict.fromkeys([chosen, DEFAULTS[role], *FALLBACK]))
-    err = None
+    err, failed = None, []
     for choice in order:
         try:
-            return parse_json(call(choice, system, user, web, timeout)), choice
+            data = parse_json(call(choice, system, user, web, timeout))
+            if failed:
+                catat(channel, "ai", f"{role}: {', '.join(failed)} gagal ({str(err)[:120]}), dikerjakan {choice}")
+            return data, choice
         except Exception as e:  # noqa: BLE001 - coba bawaan peran ini
             err = e
+            failed.append(choice)
             log(f"{channel}/{role} {choice} gagal: {str(e)[:200]}")
+    catat(channel, "ai-gagal", f"{role}: semua AI gagal ({str(err)[:200]})")
     raise RuntimeError(f"{channel}/{role}: semua AI gagal ({err})")
 
 
 if __name__ == "__main__":  # self-check tanpa memanggil AI sungguhan
     import tempfile
+
+    catat = lambda *a, **k: None  # noqa: E731 - self-check tidak menulis log sungguhan
 
     CONFIG = Path(tempfile.mkdtemp()) / "peran.json"
     assert settings()["whatif"]["juri"] == "claude:opus"

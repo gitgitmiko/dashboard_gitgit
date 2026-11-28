@@ -108,7 +108,7 @@ function RolesCard({ active }: { active: boolean }) {
           <CardTitle>Peran AI</CardTitle>
           <CardDescription className="mt-1.5">
             Siapa yang mengerjakan tiap tahap riset 19:00. Berlaku mulai riset berikutnya, tanpa restart. Kalau AI pilihan gagal (limit/error), tahap itu
-            otomatis dikerjakan bawaannya lalu Claude Sonnet. MiMo tidak bisa web search: sebagai periset ia hanya mengolah daftar tren yang dikumpulkan
+            otomatis dikerjakan bawaannya, lalu Claude Sonnet, MiMo Pro, dan terakhir model gratis lewat 9router. MiMo tidak bisa web search: sebagai periset ia hanya mengolah daftar tren yang dikumpulkan
             skrip. Hermes memakai model yang dipilih di config Hermes.
           </CardDescription>
         </div>
@@ -137,6 +137,60 @@ function RolesCard({ active }: { active: boolean }) {
             </div>
           ))}
       </CardContent>
+    </Card>
+  );
+}
+
+type Cadangan = { t: number; channel: string; jenis: string; pesan: string; darurat: boolean; wa: boolean };
+const JENIS: Record<string, string> = {
+  ai: "AI pengganti",
+  "ai-gagal": "Semua AI gagal",
+  "bank-naskah": "Bank naskah",
+  "suara-piper": "Suara Piper",
+  "stok-terpakai": "Stok terpakai",
+  "produksi-gagal": "Produksi gagal",
+};
+
+/** Kejadian saat produksi memakai cadangan (lib/cadangan.py). Yang darurat juga dikirim ke WA. */
+function FallbackCard({ active }: { active: boolean }) {
+  const q = useQuery({ queryKey: ["cadangan"], queryFn: () => api<{ rows: Cadangan[] }>("/api/cadangan"), enabled: active, refetchInterval: active ? 60000 : false });
+  const rows = q.data?.rows ?? [];
+  const p = usePaged(rows);
+  const name = Object.fromEntries(CHANNEL);
+  return (
+    <Card className="gap-3">
+      <CardHeader>
+        <div>
+          <CardTitle>Riwayat cadangan</CardTitle>
+          <CardDescription className="mt-1.5">
+            Setiap kali produksi konten tidak bisa memakai jalur utama: AI pengganti saat Claude gagal, bank naskah lama saat semua AI gagal, suara Piper
+            lokal, atau video stok yang terpakai. Kejadian darurat juga dikirim ke WA (paling banyak sekali per 6 jam per jenis).
+          </CardDescription>
+        </div>
+        <CardAction>
+          <RefreshButton onClick={() => q.refetch()} busy={q.isFetching} />
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        {q.error && <ErrorNote>{q.error.message}</ErrorNote>}
+        {!rows.length && (
+          <p className="py-6 text-center text-sm text-muted-foreground">{q.isLoading ? "Memuat…" : "Belum pernah memakai cadangan. Semua produksi lewat jalur utama."}</p>
+        )}
+        <ul className="flex flex-col divide-y">
+          {p.rows.map((r) => (
+            <li key={`${r.t}-${r.jenis}`} className="flex flex-col gap-1 py-2.5">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant={r.darurat ? "destructive" : "warning"}>{JENIS[r.jenis] || r.jenis}</Badge>
+                <span>{name[r.channel] || r.channel}</span>
+                <span className="tabular">{fmtShort(new Date(r.t).toISOString())}</span>
+                {r.wa && <span>· WA terkirim</span>}
+              </div>
+              <p className="text-sm">{r.pesan}</p>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+      <ClientPager p={p} unit="kejadian" />
     </Card>
   );
 }
@@ -263,6 +317,8 @@ export function Cron({ active }: { active: boolean }) {
       </Card>
 
       <RolesCard active={active} />
+
+      <FallbackCard active={active} />
 
       <Card className="gap-3">
         <CardHeader>

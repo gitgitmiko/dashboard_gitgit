@@ -2225,6 +2225,26 @@ const server = createServer(async (req, res) => {
       { redirect: undefined, after: (note) => `/?tiktok=${note}#sosmed` });
   }
 
+  // Riwayat cadangan produksi konten (lib/cadangan.py): AI pengganti, bank naskah, suara Piper, stok terpakai.
+  if (path === `${base}/api/cadangan` && req.method === "GET") {
+    if (!requireAuth(req, res)) return;
+    let rows = [];
+    try {
+      const lines = (await readFile(join(HOME, ".config", "gitgit-studio", "cadangan.jsonl"), "utf8")).trim().split("\n").slice(-200);
+      rows = lines.flatMap((l) => {
+        try {
+          return [JSON.parse(l)];
+        } catch {
+          return [];
+        }
+      });
+    } catch {
+      /* belum pernah ada kejadian */
+    }
+    sendJson(res, 200, { ok: true, rows: rows.reverse() });
+    return;
+  }
+
   // Peran AI: siapa yang meriset/menulis/menjuri/mengecek per channel. Pipeline membaca berkas yang sama lewat
   // lib/peran_ai.py; daftar pilihan & bawaan di bawah harus sama dengan modul itu.
   if (path === `${base}/api/peran-ai` && (req.method === "GET" || req.method === "PUT")) {
